@@ -42,6 +42,7 @@ export type DigestSnapshot = {
   important: DigestItem[];
   confirmed: DigestItem[];
   likely: DigestItem[];
+  broadcast: DigestItem[];
   social: DigestItem[];
   uncertain: DigestItem[];
   suppressedCount: number;

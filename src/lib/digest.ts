@@ -41,13 +41,21 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
     (item) =>
       item.priority !== "important" &&
       item.sourceType !== "social" &&
+      item.sourceType !== "broadcast" &&
       item.label === "confirmed_otb",
   );
   const likely = shown.filter(
     (item) =>
       item.priority !== "important" &&
       item.sourceType !== "social" &&
+      item.sourceType !== "broadcast" &&
       item.label === "likely_otb",
+  );
+  // TV & radio (direct station feeds + YouTube segments), kept together in
+  // their own section regardless of relevance label.
+  const broadcast = shown.filter(
+    (item) =>
+      item.priority !== "important" && item.sourceType === "broadcast",
   );
   const social = shown.filter(
     (item) =>
@@ -57,7 +65,9 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
   );
   const uncertain = shown.filter(
     (item) =>
-      item.priority !== "important" && item.label === "uncertain_i66_segment",
+      item.priority !== "important" &&
+      item.sourceType !== "broadcast" &&
+      item.label === "uncertain_i66_segment",
   );
 
   return {
@@ -68,6 +78,7 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
     important,
     confirmed,
     likely,
+    broadcast,
     social,
     uncertain,
     suppressedCount: collection.suppressedCount,
@@ -94,6 +105,7 @@ export function renderDigestHtml(snapshot: DigestSnapshot) {
     ["Important / Needs Review", snapshot.important],
     ["Confirmed 66 Outside the Beltway", snapshot.confirmed],
     ["Likely 66 Outside the Beltway", snapshot.likely],
+    ["TV, Radio & Broadcast", snapshot.broadcast ?? []],
     ["Reddit and Public Social", snapshot.social],
     ["Uncertain / Possible Matches", snapshot.uncertain],
   ] as const;
@@ -135,6 +147,7 @@ export function renderDigestText(snapshot: DigestSnapshot) {
     ["Important / Needs Review", snapshot.important],
     ["Confirmed 66 Outside the Beltway", snapshot.confirmed],
     ["Likely 66 Outside the Beltway", snapshot.likely],
+    ["TV, Radio & Broadcast", snapshot.broadcast ?? []],
     ["Reddit and Public Social", snapshot.social],
     ["Uncertain / Possible Matches", snapshot.uncertain],
   ] as const;

@@ -1,3 +1,4 @@
+import { MEDIA_FEEDS, type FeedSource } from "@/lib/feeds";
 import {
   DEFAULT_SETTINGS,
   type MonitoringSettings,
@@ -9,7 +10,7 @@ type RawItem = {
   title: string;
   source: string;
   url: string;
-  sourceType: "news" | "social";
+  sourceType: "news" | "social" | "broadcast";
   snippet: string;
   publishedAt: string;
   provider: string;
@@ -54,6 +55,9 @@ export async function collectDigestItems(
   const newsQueries = [...exactQueries, BROAD_NEWS_QUERY];
 
   const providers: Array<{ name: string; run: () => Promise<RawItem[]> }> = [
+    // Direct outlet feeds run first so a station's own article wins dedup over
+    // a search-engine copy and keeps its broadcast classification.
+    { name: "Media Feeds", run: () => collectFeedItems(MEDIA_FEEDS) },
     { name: "GDELT", run: () => collectGdeltArticles(exactQueries) },
     { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
     { name: "Bing News", run: () => collectBingNewsItems(exactQueries) },
@@ -235,6 +239,55 @@ async function collectRedditItems(exactQueries: string[]): Promise<RawItem[]> {
     publishedAt: parseDate(entry.updated),
     provider: "Reddit",
     domain: "reddit.com",
+  }));
+}
+
+async function collectFeedItems(feeds: FeedSource[]): Promise<RawItem[]> {
+  if (feeds.length === 0) {
+    return [];
+  }
+  // Direct RSS/Atom/YouTube feeds for broadcast, agency, and local outlets.
+  // Individual feed failures are tolerated (a flaky station site shouldn't drop
+  // the rest); only a total wipeout flags the provider as degraded.
+  const results = await Promise.allSettled(feeds.map((feed) => collectFeed(feed)));
+
+  if (results.every((result) => result.status === "rejected")) {
+    throw new Error("All media feeds failed");
+  }
+
+  return results.flatMap(unwrapSettled);
+}
+
+async function collectFeed(feed: FeedSource): Promise<RawItem[]> {
+  // TV and radio land in the dedicated broadcast section; agency/online feeds
+  // flow into the normal news buckets.
+  const sourceType =
+    feed.medium === "TV" || feed.medium === "Radio" ? "broadcast" : "news";
+  const provider = `Feed: ${feed.name}`;
+  const xml = await fetchText(new URL(feed.url));
+
+  if (feed.kind === "youtube") {
+    return parseYouTubeEntries(xml).map((entry) => ({
+      title: entry.title || "Untitled segment",
+      source: feed.name,
+      url: entry.link,
+      sourceType,
+      snippet: entry.description || entry.title,
+      publishedAt: parseDate(entry.published),
+      provider,
+      domain: feed.domain,
+    }));
+  }
+
+  return parseRssItems(xml).map((item) => ({
+    title: item.title || "Untitled item",
+    source: feed.name,
+    url: item.link,
+    sourceType,
+    snippet: item.description || item.title,
+    publishedAt: parseDate(item.pubDate),
+    provider,
+    domain: feed.domain,
   }));
 }
 
@@ -539,6 +592,26 @@ function parseAtomEntries(xml: string) {
   return entries.filter((entry) => entry.link && entry.title);
 }
 
+function parseYouTubeEntries(xml: string) {
+  const entries: YouTubeEntry[] = [];
+  const entryMatches = xml.matchAll(/<entry\b[^>]*>([\s\S]*?)<\/entry>/gi);
+
+  for (const [, entryXml] of entryMatches) {
+    const link =
+      entryXml.match(/<link\b[^>]*rel="alternate"[^>]*href="([^"]+)"/i)?.[1] ??
+      entryXml.match(/<link\b[^>]*href="([^"]+)"/i)?.[1] ??
+      "";
+    entries.push({
+      title: readXmlTag(entryXml, "title"),
+      link: decodeXml(link),
+      published: readXmlTag(entryXml, "published"),
+      description: stripTags(readXmlTag(entryXml, "media:description")),
+    });
+  }
+
+  return entries.filter((entry) => entry.link && entry.title);
+}
+
 function readXmlTag(xml: string, tag: string) {
   const match = xml.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
   return decodeXml(stripCdata(match?.[1] ?? ""));
@@ -669,4 +742,11 @@ type AtomEntry = {
   updated: string;
   content: string;
   subreddit: string;
+};
+
+type YouTubeEntry = {
+  title: string;
+  link: string;
+  published: string;
+  description: string;
 };

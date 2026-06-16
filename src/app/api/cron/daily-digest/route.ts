@@ -15,6 +15,7 @@ function shownItemIds(snapshot: DigestSnapshot) {
     ...snapshot.important,
     ...snapshot.confirmed,
     ...snapshot.likely,
+    ...(snapshot.broadcast ?? []),
     ...snapshot.social,
     ...snapshot.uncertain,
   ].map((item) => item.id);

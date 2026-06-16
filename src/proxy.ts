@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Site-wide HTTP Basic Auth (shared login).
+ * Site-wide HTTP Basic Auth (shared login). In Next.js 16 this lives in
+ * `proxy.ts` (the former `middleware.ts` convention).
  *
  * Credentials come from BASIC_AUTH_USER / BASIC_AUTH_PASSWORD. If either is
  * unset the gate is disabled (fail open) so a missing env var can never lock
@@ -15,7 +16,7 @@ export const config = {
   matcher: ["/((?!api/cron|_next/static|_next/image|favicon.ico).*)"],
 };
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const expectedUser = process.env.BASIC_AUTH_USER;
   const expectedPassword = process.env.BASIC_AUTH_PASSWORD;
 

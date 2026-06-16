@@ -145,6 +145,78 @@ export async function recordSend(record: {
   }
 }
 
+export type ArchiveItem = {
+  id: string;
+  title: string;
+  url: string;
+  source: string;
+  sourceType: string;
+  label: string;
+  priority: string;
+  snippet: string;
+  publishedAt: string | null;
+  firstSeenAt: string | null;
+};
+
+/**
+ * Stories for the archive, newest first. `q` does a case-insensitive match on
+ * title/source/snippet; `since` is an ISO lower bound on published_at. Returns
+ * one extra row beyond `limit` internally to report truncation.
+ */
+export async function getArchiveItems(opts: {
+  q?: string;
+  since?: string;
+  limit?: number;
+}): Promise<{ items: ArchiveItem[]; truncated: boolean }> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return { items: [], truncated: false };
+  }
+
+  const limit = opts.limit ?? 500;
+  let query = supabase
+    .from("digest_items")
+    .select(
+      "id, title, url, source, source_type, label, priority, snippet, published_at, first_seen_at",
+    )
+    .order("published_at", { ascending: false, nullsFirst: false })
+    .limit(limit + 1);
+
+  if (opts.since) {
+    query = query.gte("published_at", opts.since);
+  }
+
+  const term = (opts.q ?? "").replace(/[%,()*\\]/g, " ").trim().slice(0, 80);
+  if (term) {
+    query = query.or(
+      `title.ilike.%${term}%,source.ilike.%${term}%,snippet.ilike.%${term}%`,
+    );
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("[digest-store] getArchiveItems failed:", error.message);
+    return { items: [], truncated: false };
+  }
+
+  const rows = data ?? [];
+  const truncated = rows.length > limit;
+  const items = rows.slice(0, limit).map((row) => ({
+    id: row.id as string,
+    title: row.title as string,
+    url: row.url as string,
+    source: row.source as string,
+    sourceType: row.source_type as string,
+    label: row.label as string,
+    priority: row.priority as string,
+    snippet: (row.snippet as string | null) ?? "",
+    publishedAt: (row.published_at as string | null) ?? null,
+    firstSeenAt: (row.first_seen_at as string | null) ?? null,
+  }));
+
+  return { items, truncated };
+}
+
 /** Latest stored snapshot, for the dashboard/preview to render without a live fetch. */
 export async function getLatestStoredSnapshot(): Promise<DigestSnapshot | null> {
   const supabase = getSupabase();

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { loadDashboardSnapshot } from "@/lib/digest";
 import { monitoringConfig } from "@/lib/monitoring-config";
 import { getSources, summarizeSources } from "@/lib/sources";
+import SiteNav from "@/components/site-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +13,11 @@ export default async function DashboardPage() {
   const highPriority = sources.filter((source) => source.priority === "high");
 
   return (
-    <main className="min-h-screen px-5 py-6 md:px-8">
+    <>
+      <SiteNav active="dashboard" />
+      <main className="min-h-screen px-5 py-6 md:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5 md:flex-row md:items-end md:justify-between">
+        <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5">
           <div>
             <p className="text-sm font-semibold uppercase text-[var(--accent)]">
               66 Media Monitor
@@ -28,26 +31,6 @@ export default async function DashboardPage() {
               priority local media.
             </p>
           </div>
-          <nav className="flex flex-wrap gap-2">
-            <Link
-              href="/sources"
-              className="rounded-md border border-[var(--line)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold"
-            >
-              Sources
-            </Link>
-            <Link
-              href="/settings"
-              className="rounded-md border border-[var(--line)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold"
-            >
-              Keywords
-            </Link>
-            <a
-              href="/api/digest/preview"
-              className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
-            >
-              Digest Preview
-            </a>
-          </nav>
         </header>
 
         <section className="metric-grid">
@@ -129,6 +112,7 @@ export default async function DashboardPage() {
         </section>
       </div>
     </main>
+    </>
   );
 }
 

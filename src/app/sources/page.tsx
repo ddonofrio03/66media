@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { getSources, summarizeSources } from "@/lib/sources";
+import SiteNav from "@/components/site-nav";
 
 export default async function SourcesPage() {
   const sources = await getSources();
   const summary = summarizeSources(sources);
 
   return (
+    <>
+    <SiteNav active="sources" />
     <main className="min-h-screen px-5 py-6 md:px-8">
       <div className="mx-auto max-w-7xl">
         <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5 md:flex-row md:items-end md:justify-between">
@@ -82,6 +85,7 @@ export default async function SourcesPage() {
         </section>
       </div>
     </main>
+    </>
   );
 }
 

@@ -195,7 +195,7 @@ function renderSection(title: string, items: DigestItem[]) {
 
 function renderItem(item: DigestItem) {
   return `<article style="border-top:1px solid #dce3e0;padding-top:12px;margin-top:12px;">
-    <h3 style="font-size:16px;margin:0 0 6px;"><a href="${escapeHtml(item.url)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(item.title)}</a></h3>
+    <h3 style="font-size:16px;margin:0 0 6px;"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" style="color:#0f766e;text-decoration:none;">${escapeHtml(item.title)}</a></h3>
     <p style="color:#66706d;font-size:13px;margin:0 0 6px;">${escapeHtml(item.source)} · ${escapeHtml(formatItemDate(item.publishedAt))} · ${escapeHtml(item.reason)}</p>
     <p style="margin:0;line-height:1.45;">${escapeHtml(item.snippet)}</p>
   </article>`;

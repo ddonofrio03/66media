@@ -5,6 +5,8 @@ import {
   renderDigestText,
 } from "@/lib/digest";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const snapshot = await buildDigestSnapshot();
 

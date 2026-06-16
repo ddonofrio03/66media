@@ -1,0 +1,573 @@
+import { monitoringConfig } from "@/lib/monitoring-config";
+import { getDigestLookbackHours } from "@/lib/time";
+import type { DigestItem, RelevanceLabel, Source } from "@/lib/types";
+
+type RawItem = {
+  title: string;
+  source: string;
+  url: string;
+  sourceType: "news" | "social";
+  snippet: string;
+  publishedAt: string;
+  provider: string;
+  domain?: string;
+};
+
+type CollectionResult = {
+  items: DigestItem[];
+  suppressedCount: number;
+};
+
+const EXACT_NEWS_QUERIES = [
+  '"66 Express Lanes"',
+  '"66 Outside the Beltway"',
+  '"I-66 outside the Beltway"',
+  '"66 Express Mobility Partners"',
+  '"66 EMP"',
+  "66EMP",
+  '"Transform 66 Outside the Beltway"',
+];
+
+const BROAD_NEWS_QUERY =
+  '("I-66" OR "Interstate 66") (toll OR express OR lanes OR crash OR closure OR traffic) (Fairfax OR "Prince William" OR Gainesville OR Manassas OR Centreville OR Haymarket OR "Northern Virginia")';
+
+const CRITICAL_PRIORITY_TERMS = [
+  "fatal",
+  "fatality",
+  "major crash",
+  "multi-vehicle crash",
+  "closure",
+  "closed",
+  "shut down",
+  "shutdown",
+  "all lanes",
+  "lawsuit",
+  "tolling issue",
+  "payment issue",
+];
+
+const USER_AGENT =
+  "66EMP media monitor; contact ddonofrio@thecaseygroup.us";
+
+export async function collectDigestItems(
+  sources: Source[],
+  now = new Date(),
+): Promise<CollectionResult> {
+  const [gdeltResult, googleResult, redditResult] = await Promise.allSettled([
+    collectGdeltArticles(),
+    collectGoogleNewsItems(),
+    collectRedditItems(),
+  ]);
+
+  const rawItems = [
+    ...unwrapSettled(gdeltResult),
+    ...unwrapSettled(googleResult),
+    ...unwrapSettled(redditResult),
+  ];
+  const lookbackHours = getDigestLookbackHours(now);
+  const uniqueItems = dedupeRawItems(rawItems);
+  const timelyItems = uniqueItems.filter((item) =>
+    isInsideDigestWindow(item.publishedAt, now, lookbackHours),
+  );
+  const items = timelyItems
+    .map((item) => classifyItem(item, sources))
+    .filter((item): item is DigestItem => Boolean(item))
+    .sort(sortDigestItems);
+
+  return {
+    items,
+    suppressedCount: Math.max(uniqueItems.length - items.length, 0),
+  };
+}
+
+async function collectGdeltArticles(): Promise<RawItem[]> {
+  const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
+  url.searchParams.set("query", `(${EXACT_NEWS_QUERIES.join(" OR ")})`);
+  url.searchParams.set("mode", "artlist");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("maxrecords", "25");
+  url.searchParams.set("sort", "datedesc");
+  url.searchParams.set("timespan", "2d");
+
+  const data = await fetchJson<{ articles?: GdeltArticle[] }>(url);
+  return (data.articles ?? []).map((article) => ({
+    title: article.title ?? "Untitled article",
+    source: article.domain ?? "GDELT",
+    url: article.url ?? "",
+    sourceType: "news",
+    snippet: article.title ?? "",
+    publishedAt: parseGdeltDate(article.seendate),
+    provider: "GDELT",
+    domain: article.domain,
+  }));
+}
+
+async function collectGoogleNewsItems(): Promise<RawItem[]> {
+  const queries = [...EXACT_NEWS_QUERIES, BROAD_NEWS_QUERY];
+  const results = await Promise.allSettled(
+    queries.map((query) => collectGoogleNewsQuery(query)),
+  );
+
+  return results.flatMap(unwrapSettled);
+}
+
+async function collectGoogleNewsQuery(query: string): Promise<RawItem[]> {
+  const url = new URL("https://news.google.com/rss/search");
+  url.searchParams.set("q", `${query} when:2d`);
+  url.searchParams.set("hl", "en-US");
+  url.searchParams.set("gl", "US");
+  url.searchParams.set("ceid", "US:en");
+
+  const xml = await fetchText(url);
+  return parseRssItems(xml).map((item) => ({
+    title: item.title || "Untitled article",
+    source: item.source || "Google News",
+    url: item.link,
+    sourceType: "news",
+    snippet: item.description || item.title,
+    publishedAt: parseDate(item.pubDate),
+    provider: "Google News",
+  }));
+}
+
+async function collectRedditItems(): Promise<RawItem[]> {
+  const url = new URL("https://www.reddit.com/search.json");
+  url.searchParams.set(
+    "q",
+    '"66 Express Lanes" OR "66 Outside the Beltway" OR "66EMP" OR "I-66"',
+  );
+  url.searchParams.set("sort", "new");
+  url.searchParams.set("t", "day");
+  url.searchParams.set("limit", "25");
+
+  const data = await fetchJson<RedditSearchResponse>(url);
+  return (data.data?.children ?? []).map(({ data: post }) => ({
+    title: post.title ?? "Untitled Reddit post",
+    source: `r/${post.subreddit ?? "reddit"}`,
+    url: post.permalink?.startsWith("http")
+      ? post.permalink
+      : `https://www.reddit.com${post.permalink ?? ""}`,
+    sourceType: "social",
+    snippet: post.selftext || post.title || "",
+    publishedAt: post.created_utc
+      ? new Date(post.created_utc * 1000).toISOString()
+      : new Date().toISOString(),
+    provider: "Reddit",
+    domain: "reddit.com",
+  }));
+}
+
+function classifyItem(item: RawItem, sources: Source[]): DigestItem | null {
+  if (!item.url || !item.title) {
+    return null;
+  }
+
+  const combined = normalizeText(
+    [item.title, item.snippet, item.source, item.domain].join(" "),
+  );
+
+  if (isLikelyNoise(combined)) {
+    return null;
+  }
+
+  const sourceMatch = findSourceMatch(item, sources);
+  const label = determineLabel(combined);
+
+  if (label === "noise") {
+    return null;
+  }
+
+  const priority = isCritical(combined) ? "important" : "normal";
+  const reason = buildReason(label, sourceMatch);
+
+  return {
+    id: createStableId(item.url, item.title),
+    title: cleanText(item.title),
+    source: sourceMatch?.sourceName || cleanText(item.source),
+    url: item.url,
+    sourceType: item.sourceType,
+    label,
+    priority,
+    reason,
+    snippet: truncate(cleanText(item.snippet || item.title), 360),
+    publishedAt: item.publishedAt,
+  };
+}
+
+function determineLabel(text: string): RelevanceLabel {
+  const hasExactOutsideTerm = [
+    "66 outside the beltway",
+    "i-66 outside the beltway",
+    "66 express mobility partners",
+    "66 emp",
+    "66emp",
+    "transform 66 outside the beltway",
+  ].some((term) => text.includes(term));
+
+  if (hasExactOutsideTerm) {
+    return "confirmed_otb";
+  }
+
+  const mentionsExpressLanes =
+    text.includes("66 express lanes") || text.includes("i-66 express lanes");
+  const mentionsI66 =
+    text.includes("i-66") ||
+    text.includes("interstate 66") ||
+    text.includes("route 66");
+  const mentionsInsideBeltway =
+    text.includes("inside the beltway") || text.includes("inside beltway");
+  const hasCorridorTerm = [
+    "fairfax",
+    "prince william",
+    "gainesville",
+    "manassas",
+    "centreville",
+    "haymarket",
+    "vienna",
+    "northern virginia",
+    "nova",
+  ].some((term) => text.includes(term));
+  const hasTollOrTrafficTerm = [
+    "toll",
+    "express",
+    "lanes",
+    "traffic",
+    "commute",
+    "crash",
+    "closure",
+    "closed",
+  ].some((term) => text.includes(term));
+
+  if (mentionsExpressLanes && hasCorridorTerm && !mentionsInsideBeltway) {
+    return "confirmed_otb";
+  }
+
+  if (mentionsExpressLanes || (mentionsI66 && hasCorridorTerm && hasTollOrTrafficTerm)) {
+    return mentionsInsideBeltway ? "uncertain_i66_segment" : "likely_otb";
+  }
+
+  if (mentionsI66 && (hasCorridorTerm || hasTollOrTrafficTerm)) {
+    return "uncertain_i66_segment";
+  }
+
+  return "noise";
+}
+
+function buildReason(
+  label: RelevanceLabel,
+  sourceMatch: Source | undefined,
+) {
+  const labelReason: Record<RelevanceLabel, string> = {
+    confirmed_otb: "Strong Outside the Beltway / 66EMP match",
+    likely_otb: "Likely I-66 Express Lanes or corridor match",
+    uncertain_i66_segment: "Mentions I-66, but the exact road segment is unclear",
+    related_toll_express_lane_issue: "Related toll or express lane issue",
+    noise: "Suppressed as unrelated",
+  };
+
+  if (!sourceMatch) {
+    return labelReason[label];
+  }
+
+  return `${labelReason[label]} · Known ${sourceMatch.priority}-priority source`;
+}
+
+function findSourceMatch(item: RawItem, sources: Source[]) {
+  const itemHost = normalizeHost(item.domain || item.url);
+  const itemSource = normalizeText(item.source);
+
+  return sources.find((source) => {
+    const sourceHost = normalizeHost(source.website);
+    const sourceName = normalizeText(source.sourceName);
+
+    return (
+      Boolean(sourceHost && itemHost && itemHost.endsWith(sourceHost)) ||
+      Boolean(sourceName && itemSource.includes(sourceName))
+    );
+  });
+}
+
+function isLikelyNoise(text: string) {
+  return monitoringConfig.excludeTerms.some((term) =>
+    text.includes(normalizeText(term)),
+  );
+}
+
+function isCritical(text: string) {
+  return CRITICAL_PRIORITY_TERMS.some((term) =>
+    text.includes(normalizeText(term)),
+  );
+}
+
+function sortDigestItems(a: DigestItem, b: DigestItem) {
+  const priorityOrder = { important: 0, normal: 1, low: 2 };
+  const labelOrder: Record<RelevanceLabel, number> = {
+    confirmed_otb: 0,
+    likely_otb: 1,
+    related_toll_express_lane_issue: 2,
+    uncertain_i66_segment: 3,
+    noise: 4,
+  };
+
+  const priorityDelta = priorityOrder[a.priority] - priorityOrder[b.priority];
+  if (priorityDelta !== 0) {
+    return priorityDelta;
+  }
+
+  const labelDelta = labelOrder[a.label] - labelOrder[b.label];
+  if (labelDelta !== 0) {
+    return labelDelta;
+  }
+
+  return dateValue(b.publishedAt) - dateValue(a.publishedAt);
+}
+
+function dedupeRawItems(items: RawItem[]) {
+  const seen = new Set<string>();
+  const seenTitles = new Set<string>();
+  const deduped: RawItem[] = [];
+
+  for (const item of items) {
+    const key = createStableId(item.url, item.title);
+    const titleKey = canonicalTitleKey(item);
+    if (seen.has(key) || (titleKey && seenTitles.has(titleKey))) {
+      continue;
+    }
+
+    seen.add(key);
+    if (titleKey) {
+      seenTitles.add(titleKey);
+    }
+    deduped.push(item);
+  }
+
+  return deduped;
+}
+
+function canonicalTitleKey(item: RawItem) {
+  const withoutSource = item.title.replace(/\s+-\s+[^-]+$/, "");
+  const key = normalizeText(withoutSource);
+  return key.length > 24 ? key : "";
+}
+
+function createStableId(url: string, title: string) {
+  const normalizedUrl = normalizeUrl(url);
+  if (normalizedUrl) {
+    return normalizedUrl;
+  }
+
+  return normalizeText(title);
+}
+
+function normalizeUrl(value: string) {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    for (const key of [...url.searchParams.keys()]) {
+      if (
+        key.startsWith("utm_") ||
+        key === "fbclid" ||
+        key === "gclid" ||
+        key === "ocid"
+      ) {
+        url.searchParams.delete(key);
+      }
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+async function fetchJson<T>(url: URL): Promise<T> {
+  const response = await fetchWithTimeout(url);
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Request failed with ${response.status}`);
+  }
+
+  return JSON.parse(text) as T;
+}
+
+async function fetchText(url: URL): Promise<string> {
+  const response = await fetchWithTimeout(url);
+  if (!response.ok) {
+    throw new Error(`Request failed with ${response.status}`);
+  }
+
+  return response.text();
+}
+
+async function fetchWithTimeout(url: URL) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    return await fetch(url, {
+      cache: "no-store",
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "application/json,text/xml,application/rss+xml,text/plain,*/*",
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseRssItems(xml: string) {
+  const items: RssItem[] = [];
+  const itemMatches = xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi);
+
+  for (const [, itemXml] of itemMatches) {
+    items.push({
+      title: readXmlTag(itemXml, "title"),
+      link: readXmlTag(itemXml, "link"),
+      pubDate: readXmlTag(itemXml, "pubDate"),
+      description: stripTags(readXmlTag(itemXml, "description")),
+      source: readXmlTag(itemXml, "source"),
+    });
+  }
+
+  return items.filter((item) => item.link && item.title);
+}
+
+function readXmlTag(xml: string, tag: string) {
+  const match = xml.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return decodeXml(stripCdata(match?.[1] ?? ""));
+}
+
+function stripCdata(value: string) {
+  return value.replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "");
+}
+
+function stripTags(value: string) {
+  return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function decodeXml(value: string) {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .trim();
+}
+
+function parseGdeltDate(value?: string) {
+  if (!value) {
+    return new Date().toISOString();
+  }
+
+  if (/^\d{14}$/.test(value)) {
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(4, 6)) - 1;
+    const day = Number(value.slice(6, 8));
+    const hour = Number(value.slice(8, 10));
+    const minute = Number(value.slice(10, 12));
+    const second = Number(value.slice(12, 14));
+    return new Date(Date.UTC(year, month, day, hour, minute, second)).toISOString();
+  }
+
+  return parseDate(value);
+}
+
+function parseDate(value?: string) {
+  const parsed = value ? new Date(value) : new Date();
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toISOString();
+  }
+
+  return parsed.toISOString();
+}
+
+function normalizeText(value: string) {
+  return cleanText(value).toLowerCase();
+}
+
+function cleanText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncate(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 1).trim()}...`;
+}
+
+function normalizeHost(value: string) {
+  if (!value) {
+    return "";
+  }
+
+  try {
+    const host = value.startsWith("http")
+      ? new URL(value).hostname
+      : new URL(`https://${value}`).hostname;
+    return host.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return value.replace(/^https?:\/\//, "").replace(/^www\./, "").toLowerCase();
+  }
+}
+
+function isInsideDigestWindow(
+  publishedAt: string,
+  now: Date,
+  lookbackHours: number,
+) {
+  const timestamp = dateValue(publishedAt);
+  if (!timestamp) {
+    return true;
+  }
+
+  const nowValue = now.getTime();
+  return (
+    timestamp >= nowValue - lookbackHours * 60 * 60 * 1000 &&
+    timestamp <= nowValue + 6 * 60 * 60 * 1000
+  );
+}
+
+function dateValue(value: string) {
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function unwrapSettled<T>(result: PromiseSettledResult<T[]>): T[] {
+  return result.status === "fulfilled" ? result.value : [];
+}
+
+type GdeltArticle = {
+  title?: string;
+  url?: string;
+  seendate?: string;
+  domain?: string;
+};
+
+type RssItem = {
+  title: string;
+  link: string;
+  pubDate: string;
+  description: string;
+  source: string;
+};
+
+type RedditSearchResponse = {
+  data?: {
+    children?: Array<{
+      data: {
+        title?: string;
+        subreddit?: string;
+        permalink?: string;
+        selftext?: string;
+        created_utc?: number;
+      };
+    }>;
+  };
+};

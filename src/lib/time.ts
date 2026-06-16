@@ -36,3 +36,8 @@ export function isDigestSendWindow(date = new Date()) {
   const parts = getNewYorkParts(date);
   return parts.hour === 6 && parts.minute === 30;
 }
+
+export function getDigestLookbackHours(date = new Date()) {
+  const parts = getNewYorkParts(date);
+  return parts.weekday === "Mon" ? 72 : 36;
+}

@@ -7,6 +7,9 @@ import {
 import { sendEmail } from "@/lib/email";
 import { getNewYorkParts, isDigestSendWindow, isWeekday } from "@/lib/time";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
   const secret = process.env.CRON_SECRET;

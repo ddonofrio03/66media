@@ -3,6 +3,8 @@ import { buildDigestSnapshot } from "@/lib/digest";
 import { monitoringConfig } from "@/lib/monitoring-config";
 import { getSources, summarizeSources } from "@/lib/sources";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardPage() {
   const sources = await getSources();
   const summary = summarizeSources(sources);
@@ -60,7 +62,7 @@ export default async function DashboardPage() {
                 </p>
               </div>
               <span className="rounded-full bg-[#e6f3f1] px-3 py-1 text-xs font-semibold text-[var(--accent-strong)]">
-                Ready for credentials
+                Email active
               </span>
             </div>
 
@@ -69,16 +71,17 @@ export default async function DashboardPage() {
                 <>
                   <h3 className="font-semibold">No relevant coverage found</h3>
                   <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
-                    The current scaffold has source monitoring configured, but
-                    live collectors are not wired yet. Once Supabase, Resend,
-                    and search collectors are connected, this area will show
-                    today&apos;s top stories and the email will still send a
+                    The live digest collector checked free news and public
+                    social/search-visible sources. The email will still send a
                     short no-news digest when nothing turns up.
                   </p>
                 </>
               ) : (
                 <p className="text-sm text-[var(--muted)]">
-                  {digest.important.length} important items found.
+                  {digest.totalRelevantCount} relevant{" "}
+                  {pluralize("item", digest.totalRelevantCount)} found,
+                  including {digest.important.length} important{" "}
+                  {pluralize("item", digest.important.length)}.
                 </p>
               )}
             </div>
@@ -139,6 +142,10 @@ function Metric({
       <p className="mt-1 text-sm text-[var(--muted)]">{detail}</p>
     </div>
   );
+}
+
+function pluralize(word: string, count: number) {
+  return count === 1 ? word : `${word}s`;
 }
 
 function Row({ label, value }: { label: string; value: string }) {

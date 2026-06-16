@@ -39,6 +39,7 @@ export type DigestSnapshot = {
   generatedAt: string;
   windowLabel: string;
   recipients: string[];
+  totalRelevantCount: number;
   important: DigestItem[];
   confirmed: DigestItem[];
   likely: DigestItem[];

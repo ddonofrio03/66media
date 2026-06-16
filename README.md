@@ -6,6 +6,7 @@ Private media-monitoring dashboard and daily digest system for 66 Outside the Be
 
 - Tracks priority media sources, broadcast outlets, and public social/search-visible sources.
 - Labels coverage as confirmed, likely, uncertain, related, or noise.
+- Uses free public collection paths first: GDELT, Google News RSS-style searches, and public Reddit search.
 - Sends a 6:30 AM Eastern weekday digest.
 - Sends weekend email only when a critical/breaking threshold is met.
 - Keeps uncertain items at the bottom of the digest.
@@ -33,4 +34,4 @@ npm run dev
 
 ## Cron
 
-Vercel calls `/api/cron/daily-digest` at 10:30 and 11:30 UTC. The route checks New York local time and sends only when it is 6:30 AM Eastern. Supabase-backed send history will add durable once-per-day protection in the next setup pass.
+Vercel calls `/api/cron/daily-digest` at 10:30 and 11:30 UTC. The route checks New York local time and sends only when it is 6:30 AM Eastern. Supabase-backed send history will add durable once-per-day protection in a later setup pass.

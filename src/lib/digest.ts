@@ -1,31 +1,50 @@
+import { collectDigestItems } from "@/lib/collectors";
 import { monitoringConfig } from "@/lib/monitoring-config";
+import { getSources } from "@/lib/sources";
+import { getDigestLookbackHours } from "@/lib/time";
 import type { DigestItem, DigestSnapshot } from "@/lib/types";
 
-function createPlaceholderItems(): DigestItem[] {
-  return [];
-}
-
 export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
-  const collectedItems = createPlaceholderItems();
+  const now = new Date();
+  const sources = await getSources();
+  const collection = await collectDigestItems(sources, now);
+  const collectedItems = collection.items;
 
   const important = collectedItems.filter((item) => item.priority === "important");
-  const confirmed = collectedItems.filter((item) => item.label === "confirmed_otb");
-  const likely = collectedItems.filter((item) => item.label === "likely_otb");
-  const social = collectedItems.filter((item) => item.sourceType === "social");
+  const confirmed = collectedItems.filter(
+    (item) =>
+      item.priority !== "important" &&
+      item.sourceType !== "social" &&
+      item.label === "confirmed_otb",
+  );
+  const likely = collectedItems.filter(
+    (item) =>
+      item.priority !== "important" &&
+      item.sourceType !== "social" &&
+      item.label === "likely_otb",
+  );
+  const social = collectedItems.filter(
+    (item) =>
+      item.priority !== "important" &&
+      item.sourceType === "social" &&
+      item.label !== "uncertain_i66_segment",
+  );
   const uncertain = collectedItems.filter(
-    (item) => item.label === "uncertain_i66_segment",
+    (item) =>
+      item.priority !== "important" && item.label === "uncertain_i66_segment",
   );
 
   return {
-    generatedAt: new Date().toISOString(),
-    windowLabel: "last 24-36 hours",
+    generatedAt: now.toISOString(),
+    windowLabel: `last ${getDigestLookbackHours(now)} hours`,
     recipients: monitoringConfig.recipients,
+    totalRelevantCount: collectedItems.length,
     important,
     confirmed,
     likely,
     social,
     uncertain,
-    suppressedCount: 0,
+    suppressedCount: collection.suppressedCount,
     noRelevantCoverage: collectedItems.length === 0,
   };
 }
@@ -63,6 +82,14 @@ export function renderDigestHtml(snapshot: DigestSnapshot) {
 }
 
 export function renderDigestText(snapshot: DigestSnapshot) {
+  const sections = [
+    ["Important / Needs Review", snapshot.important],
+    ["Confirmed 66 Outside the Beltway", snapshot.confirmed],
+    ["Likely 66 Outside the Beltway", snapshot.likely],
+    ["Reddit and Public Social", snapshot.social],
+    ["Uncertain / Possible Matches", snapshot.uncertain],
+  ] as const;
+
   if (snapshot.noRelevantCoverage) {
     return [
       "66EMP Daily Media Digest",
@@ -78,6 +105,10 @@ export function renderDigestText(snapshot: DigestSnapshot) {
     "",
     `Monitoring window: ${snapshot.windowLabel}`,
     `Suppressed noise count: ${snapshot.suppressedCount}`,
+    "",
+    ...sections
+      .filter(([, items]) => items.length > 0)
+      .flatMap(([title, items]) => renderTextSection(title, items)),
   ].join("\n");
 }
 
@@ -91,9 +122,38 @@ function renderSection(title: string, items: DigestItem[]) {
 function renderItem(item: DigestItem) {
   return `<article style="border-top:1px solid #dce3e0;padding-top:12px;margin-top:12px;">
     <h3 style="font-size:16px;margin:0 0 6px;"><a href="${escapeHtml(item.url)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(item.title)}</a></h3>
-    <p style="color:#66706d;font-size:13px;margin:0 0 6px;">${escapeHtml(item.source)} · ${escapeHtml(item.publishedAt)} · ${escapeHtml(item.reason)}</p>
+    <p style="color:#66706d;font-size:13px;margin:0 0 6px;">${escapeHtml(item.source)} · ${escapeHtml(formatItemDate(item.publishedAt))} · ${escapeHtml(item.reason)}</p>
     <p style="margin:0;line-height:1.45;">${escapeHtml(item.snippet)}</p>
   </article>`;
+}
+
+function renderTextSection(title: string, items: DigestItem[]) {
+  return [
+    title,
+    "-".repeat(title.length),
+    ...items.flatMap((item) => [
+      `${item.title}`,
+      `${item.source} | ${formatItemDate(item.publishedAt)} | ${item.reason}`,
+      `${item.url}`,
+      item.snippet,
+      "",
+    ]),
+  ];
+}
+
+function formatItemDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: monitoringConfig.timezone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function escapeHtml(value: string | number) {

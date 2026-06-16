@@ -1,0 +1,63 @@
+source_name,medium,geography,website,raw_website_or_email,twitter_handle,verification_status,original_status,priority,monitoring_method,include_in_v1,notes
+WTOP,Radio,DMV,https://wtop.com,wtop.com,@WTOP,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,
+WAMU,Radio,DMV,https://american.edu,american.edu,@wamu885,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,
+WAMU,Radio,DMV,https://wamu.org,wamu.org,@wamu885,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,
+Federal News Network,Radio,DC,https://federalnewsnetwork.com,federalnewsnetwork.com,@FederalNewsNet,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,
+WMAL,Radio,DMV,https://wmal.com,wmal.com,@WMALDC,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,Primary active account. @wmalnews also exists.
+WDVM,TV,DMV,https://dcnewsnow.com,dcnewsnow.com,@DCNewsNow,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,WDVM rebranded as DC News Now.
+WDCW,TV,DMV,https://tribunemedia.com,tribunemedia.com,@DCW50,likely_inactive,Legacy / likely inactive,high,gdelt_broadcast_test;website_check;public_social_search,yes,WDCW now operates under the DC News Now brand. @DCW50 is the legacy CW50 account and may be inactive.
+WRC,TV,DMV,https://nbcwashington.com,nbcwashington.com,@nbcwashington,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,
+WTTG,TV,DMV,https://fox5dc.com,fox5dc.com,@fox5dc,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,
+WJLA,TV,DMV,https://wjla.com,wjla.com,@7NewsDC,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,
+WUSA,TV,DMV,https://wusa9.com,wusa9.com,@wusa9,verified,Verified,high,gdelt_broadcast_test;website_check;public_social_search,yes,
+Univisión,TV,DMV,https://univision.com/local/washington-dc-wfdc,univision.com/local/washington-dc-wfdc,,needs_verification,Not verified,high,gdelt_broadcast_test;website_check,yes,"Rebranded ""Univision 14 Washington D.C."" Station handle not confirmed."
+Arlington Independent Media,TV,Arlington,,heffmunson@heffmunson.com,,needs_verification,Not verified,high,gdelt_broadcast_test;website_check,yes,No active account found.
+ARLnow,Online,Arlington,https://arlnow.com,arlnow.com,@ARLnowDOTcom,verified,Verified,medium,rss_or_site_check;gdelt_news;public_social_search,yes,"Handle is @ARLnowDOTcom, NOT @ARLnow. Display name ""Arlington Now""."
+ALXnow,Online,Alexandria,https://alxnow.com,alxnow.com,,needs_verification,Not verified,medium,rss_or_site_check;gdelt_news,yes,Part of Local News Now (same publisher as ARLnow/FFXnow). Handle not confirmed; do not assume @ALXnow.
+Alexandria Times,Online/Print,Alexandria,https://alextimes.com,alextimes.com,,needs_verification,Not verified,medium,rss_or_site_check;gdelt_news,yes,Not confirmed.
+The Zebra,Online,Alexandria,https://thezebra.org,thezebra.org,,needs_verification,Not verified,medium,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Alexandria Living,Online/Print,Alexandria,https://alexandrialivingmagazine.com,alexandrialivingmagazine.com,,needs_verification,Not verified,medium,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Falls Church News Press,Online/Print,Falls Church,https://fcnp.com,fcnp.com,@fcnp,verified,Verified,low,rss_or_site_check;gdelt_news;public_social_search,yes,
+Tysons Reporter,Online,Fairfax,https://tysonsreporter.com,tysonsreporter.com,@TysonsReporter,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+FFXnow,Online,Fairfax,https://ffxnow.com,ffxnow.com,@ffxnow,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+RestonNow,Online,Fairfax,https://restonnow.com,restonnow.com,,merged_or_redirect,Merged into FFXnow,high,rss_or_site_check;gdelt_news,yes,RestonNow merged into FFXnow. Use @ffxnow.
+Fairfax County Times,Online/Print,Fairfax,https://fairfaxtimes.com,fairfaxtimes.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Daily Voice,Online,Fairfax,https://dailyvoice.com/va/fairfax,dailyvoice.com/va/fairfax,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Daily Voice network handle likely @DailyVoice (unverified). No Fairfax-specific account confirmed.
+Gainsville,Online,Prince William,https://dailyvoice.com/va/gainesville,dailyvoice.com/va/gainesville,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Daily Voice regional page. Network handle likely @DailyVoice (unverified).
+Manassas,Online,Prince William,https://dailyvoice.com/va/manassas,dailyvoice.com/va/manassas,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Daily Voice regional page. Network handle likely @DailyVoice (unverified).
+Tysons,Online,Fairfax,https://dailyvoice.com/va/tysons,dailyvoice.com/va/tysons,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Daily Voice regional page. Network handle likely @DailyVoice (unverified).
+Prince William Times,Online/Print,Prince William,https://princewilliamtimes.com,princewilliamtimes.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Prince William Living,Online/Print,Prince William,https://princewilliamliving.com,princewilliamliving.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Bristow Beat,Online,Prince William,https://bristowbeat.com,bristowbeat.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Bull Run Now / Bull Run Observer,Online/Print,Prince William,https://observernow.com,observernow.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+What's Up Prince William,Online,Prince William,https://wupw.news,wupw.news,@WUPWnews,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+Haymarket / Gainesville Lifestyle Magazine,Online/Print,Prince William,https://insidenova.com,insidenova.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Published via insidenova.com. Use @InsideNoVA.
+The Burn,Online,Loudoun,https://theburn.com,theburn.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Loudoun Now,Online/Print,Loudoun,https://loudounnow.com,loudounnow.com,@LoudounNow,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+Loudoun Times-Mirror,Online/Print,Loudoun,https://loudountimes.com,loudountimes.com,@LoudounTimes,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+Blue Ridge Leader & Loudoun Today,Online/Print,Loudoun,https://blueridgeleader.com,blueridgeleader.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Inside NoVA,Online,NoVA,https://insidenova.com,insidenova.com,@InsideNoVA,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+Northern Virginia Magazine,Online/Print,NoVA,,editorial@northernvirginiamag.com,@NorthernVAMag,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+Patch,Online,NoVA,,michael.oconnell@patch.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Patch NoVA. No single NoVA-specific account confirmed.
+Virginia Business,Online/Print,Virginia,https://va-business.com,va-business.com,@VirginiaBiz,verified,Verified,medium,rss_or_site_check;gdelt_news;public_social_search,yes,
+Richmond BizSense,Online/Print,Virginia,https://richmondbizsense.com,richmondbizsense.com,@rvabizsense,verified,Verified,medium,rss_or_site_check;gdelt_news;public_social_search,yes,
+Virginia Dogwood,Online/Print,Virginia,https://couriernewsroom.com,couriernewsroom.com,,needs_verification,Not verified,medium,rss_or_site_check;gdelt_news,yes,Virginia Dogwood (Courier Newsroom). Not confirmed.
+Virginia Mercury,Online/Print,Virginia,https://virginiamercury.com,virginiamercury.com,@MercuryVirginia,verified,Verified,medium,rss_or_site_check;gdelt_news;public_social_search,yes,
+Connection Newspapers,Online/Print,NoVA,https://connectionnewspapers.com,connectionnewspapers.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Fauquier Times,Online/Print,Fauquier,https://fauquier.com,fauquier.com,,needs_verification,Not verified,low,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Fauquier Now,Online/Print,Fauquier,https://fauquiernow.com,fauquiernow.com,,needs_verification,Not verified,low,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Fauquier Channel One,Online,Fauquier,https://fauquierchannelone.com,fauquierchannelone.com,,needs_verification,Not verified,low,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Royal Examiner,Online/Print,Warren,https://royalexaminer.com,royalexaminer.com,,needs_verification,Not verified,low,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Northern Virginia Daily,Online/Print,Shenandoah Valley,https://nvdaily.com,nvdaily.com,@nvdaily,verified,Verified,low,rss_or_site_check;gdelt_news;public_social_search,yes,
+Washington Business Journal,Online/Print,DMV,https://bizjournals.com/washington,bizjournals.com/washington,@WBJonline,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+Washington Technology,Online,DMV,https://washingtontechnology.com,washingtontechnology.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Washington Examiner,Online/Print,DMV,https://washingtonexaminer.com,washingtonexaminer.com,@washexaminer,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,Current active account. Formerly @dcexaminer.
+Washington Times,Online/Print,DMV,https://washingtontimes.com,washingtontimes.com,@WashTimes,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+Washington Exec,Online,DMV,https://washingtonexec.com,washingtonexec.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Washingtonian Magazine,Online/Print,DMV,https://washingtonian.com,washingtonian.com,@washingtonian,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+Washington City Paper,Online/Print,DC,https://washingtoncitypaper.com,washingtoncitypaper.com,,needs_verification,Not verified,medium,rss_or_site_check;gdelt_news,yes,Not confirmed.
+DC BisNow,Online,DMV,https://bisnow.com,bisnow.com,@BisnowDC,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+I95 Business,Online,DMV,https://i95business.com,i95business.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Washington Post,Online/Print,DMV,https://washingtonpost.com,washingtonpost.com,@washingtonpost,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,
+El Tiempo Latino,Online/Print,DMV,https://eltiempolatino.com,eltiempolatino.com,,needs_verification,Not verified,high,rss_or_site_check;gdelt_news,yes,Not confirmed.
+Axios,Online/Print,DMV,https://axios.com/local/washington-dc,axios.com/local/washington-dc,@axiosdc,verified,Verified,high,rss_or_site_check;gdelt_news;public_social_search,yes,

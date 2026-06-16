@@ -16,6 +16,7 @@ type RawItem = {
 type CollectionResult = {
   items: DigestItem[];
   suppressedCount: number;
+  degradedProviders: string[];
 };
 
 const EXACT_NEWS_QUERIES = [
@@ -53,17 +54,28 @@ export async function collectDigestItems(
   sources: Source[],
   now = new Date(),
 ): Promise<CollectionResult> {
-  const [gdeltResult, googleResult, redditResult] = await Promise.allSettled([
-    collectGdeltArticles(),
-    collectGoogleNewsItems(),
-    collectRedditItems(),
-  ]);
-
-  const rawItems = [
-    ...unwrapSettled(gdeltResult),
-    ...unwrapSettled(googleResult),
-    ...unwrapSettled(redditResult),
+  const providers: Array<{ name: string; run: () => Promise<RawItem[]> }> = [
+    { name: "GDELT", run: collectGdeltArticles },
+    { name: "Google News", run: collectGoogleNewsItems },
+    { name: "Reddit", run: collectRedditItems },
   ];
+
+  const settled = await Promise.allSettled(providers.map((p) => p.run()));
+  const rawItems: RawItem[] = [];
+  const degradedProviders: string[] = [];
+
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      rawItems.push(...result.value);
+    } else {
+      degradedProviders.push(providers[index].name);
+      console.error(
+        `[collectors] ${providers[index].name} collection failed:`,
+        result.reason,
+      );
+    }
+  });
+
   const lookbackHours = getDigestLookbackHours(now);
   const uniqueItems = dedupeRawItems(rawItems);
   const timelyItems = uniqueItems.filter((item) =>
@@ -77,6 +89,7 @@ export async function collectDigestItems(
   return {
     items,
     suppressedCount: Math.max(uniqueItems.length - items.length, 0),
+    degradedProviders,
   };
 }
 
@@ -107,6 +120,10 @@ async function collectGoogleNewsItems(): Promise<RawItem[]> {
   const results = await Promise.allSettled(
     queries.map((query) => collectGoogleNewsQuery(query)),
   );
+
+  if (results.every((result) => result.status === "rejected")) {
+    throw new Error("All Google News queries failed");
+  }
 
   return results.flatMap(unwrapSettled);
 }
@@ -261,7 +278,6 @@ function buildReason(
     confirmed_otb: "Strong Outside the Beltway / 66EMP match",
     likely_otb: "Likely I-66 Express Lanes or corridor match",
     uncertain_i66_segment: "Mentions I-66, but the exact road segment is unclear",
-    related_toll_express_lane_issue: "Related toll or express lane issue",
     noise: "Suppressed as unrelated",
   };
 
@@ -304,9 +320,8 @@ function sortDigestItems(a: DigestItem, b: DigestItem) {
   const labelOrder: Record<RelevanceLabel, number> = {
     confirmed_otb: 0,
     likely_otb: 1,
-    related_toll_express_lane_issue: 2,
-    uncertain_i66_segment: 3,
-    noise: 4,
+    uncertain_i66_segment: 2,
+    noise: 3,
   };
 
   const priorityDelta = priorityOrder[a.priority] - priorityOrder[b.priority];

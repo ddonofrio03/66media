@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  buildDigestSnapshot,
+  loadDashboardSnapshot,
   renderDigestHtml,
   renderDigestText,
 } from "@/lib/digest";
@@ -8,7 +8,7 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const snapshot = await buildDigestSnapshot();
+  const snapshot = await loadDashboardSnapshot();
 
   return NextResponse.json({
     snapshot,

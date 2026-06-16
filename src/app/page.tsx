@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { buildDigestSnapshot } from "@/lib/digest";
+import { loadDashboardSnapshot } from "@/lib/digest";
 import { monitoringConfig } from "@/lib/monitoring-config";
 import { getSources, summarizeSources } from "@/lib/sources";
 
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const sources = await getSources();
   const summary = summarizeSources(sources);
-  const digest = await buildDigestSnapshot();
+  const digest = await loadDashboardSnapshot();
   const highPriority = sources.filter((source) => source.priority === "high");
 
   return (

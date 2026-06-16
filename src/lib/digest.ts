@@ -1,35 +1,59 @@
 import { collectDigestItems } from "@/lib/collectors";
+import {
+  getLatestStoredSnapshot,
+  getReportedMap,
+  upsertCollectedItems,
+} from "@/lib/digest-store";
 import { monitoringConfig } from "@/lib/monitoring-config";
 import { getSources } from "@/lib/sources";
 import { getDigestLookbackHours } from "@/lib/time";
 import type { DigestItem, DigestSnapshot } from "@/lib/types";
 
+/**
+ * Runs a live collection and builds the digest the cron job will email. When
+ * Supabase is configured it persists everything collected and suppresses items
+ * already reported in a previous digest (critical/`important` items always pass
+ * through). This performs live external fetches, so the dashboard/preview should
+ * use {@link loadDashboardSnapshot} instead.
+ */
 export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
   const now = new Date();
   const sources = await getSources();
   const collection = await collectDigestItems(sources, now);
   const collectedItems = collection.items;
 
-  const important = collectedItems.filter((item) => item.priority === "important");
-  const confirmed = collectedItems.filter(
+  const reportedMap = await getReportedMap(
+    collectedItems.map((item) => item.id),
+  );
+  await upsertCollectedItems(collectedItems, now);
+
+  // An item is shown if it's critical or has never been emailed before.
+  const shown = collectedItems.filter(
+    (item) => item.priority === "important" || !reportedMap.get(item.id),
+  );
+  const repeatedItemsCount = collectedItems.length - shown.length;
+  const newItemsCount = shown.filter((item) => !reportedMap.get(item.id)).length;
+
+  const important = shown.filter((item) => item.priority === "important");
+  const confirmed = shown.filter(
     (item) =>
       item.priority !== "important" &&
       item.sourceType !== "social" &&
       item.label === "confirmed_otb",
   );
-  const likely = collectedItems.filter(
+  const likely = shown.filter(
     (item) =>
       item.priority !== "important" &&
       item.sourceType !== "social" &&
       item.label === "likely_otb",
   );
-  const social = collectedItems.filter(
+  const social = shown.filter(
     (item) =>
       item.priority !== "important" &&
       item.sourceType === "social" &&
       item.label !== "uncertain_i66_segment",
   );
-  const uncertain = collectedItems.filter(
+  const uncertain = shown.filter(
     (item) =>
       item.priority !== "important" && item.label === "uncertain_i66_segment",
   );
@@ -38,15 +62,29 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
     generatedAt: now.toISOString(),
     windowLabel: `last ${getDigestLookbackHours(now)} hours`,
     recipients: monitoringConfig.recipients,
-    totalRelevantCount: collectedItems.length,
+    totalRelevantCount: shown.length,
     important,
     confirmed,
     likely,
     social,
     uncertain,
     suppressedCount: collection.suppressedCount,
-    noRelevantCoverage: collectedItems.length === 0,
+    noRelevantCoverage: shown.length === 0,
+    degradedProviders: collection.degradedProviders,
+    newItemsCount,
+    repeatedItemsCount,
   };
+}
+
+/**
+ * Snapshot for read-only surfaces (dashboard, preview). Returns the last stored
+ * snapshot when persistence is enabled and a digest has been sent — avoiding a
+ * live external fetch on every anonymous page load. Falls back to a live build
+ * when persistence is off or nothing has been stored yet.
+ */
+export async function loadDashboardSnapshot(): Promise<DigestSnapshot> {
+  const stored = await getLatestStoredSnapshot();
+  return stored ?? buildDigestSnapshot();
 }
 
 export function renderDigestHtml(snapshot: DigestSnapshot) {
@@ -75,7 +113,16 @@ export function renderDigestHtml(snapshot: DigestSnapshot) {
               .map(([title, items]) => renderSection(title, items))
               .join("")
       }
-      <p style="color:#66706d;font-size:12px;margin-top:24px;">Suppressed noise count: ${snapshot.suppressedCount}</p>
+      ${
+        snapshot.degradedProviders.length > 0
+          ? `<p style="color:#b45309;font-size:12px;margin-top:24px;">⚠ Some sources failed this run and may be missing: ${escapeHtml(snapshot.degradedProviders.join(", "))}.</p>`
+          : ""
+      }
+      <p style="color:#66706d;font-size:12px;margin-top:24px;">Suppressed noise count: ${snapshot.suppressedCount}${
+        snapshot.repeatedItemsCount > 0
+          ? ` · ${snapshot.repeatedItemsCount} already-reported ${snapshot.repeatedItemsCount === 1 ? "item" : "items"} not repeated`
+          : ""
+      }</p>
     </main>
   </body>
 </html>`;
@@ -90,6 +137,11 @@ export function renderDigestText(snapshot: DigestSnapshot) {
     ["Uncertain / Possible Matches", snapshot.uncertain],
   ] as const;
 
+  const degradedLine =
+    snapshot.degradedProviders.length > 0
+      ? `Warning: some sources failed this run and may be missing: ${snapshot.degradedProviders.join(", ")}.`
+      : "";
+
   if (snapshot.noRelevantCoverage) {
     return [
       "66EMP Daily Media Digest",
@@ -97,14 +149,21 @@ export function renderDigestText(snapshot: DigestSnapshot) {
       `Monitoring window: ${snapshot.windowLabel}`,
       "",
       "No relevant coverage found.",
+      ...(degradedLine ? ["", degradedLine] : []),
     ].join("\n");
   }
+
+  const suppressedLine =
+    snapshot.repeatedItemsCount > 0
+      ? `Suppressed noise count: ${snapshot.suppressedCount} · ${snapshot.repeatedItemsCount} already-reported not repeated`
+      : `Suppressed noise count: ${snapshot.suppressedCount}`;
 
   return [
     "66EMP Daily Media Digest",
     "",
     `Monitoring window: ${snapshot.windowLabel}`,
-    `Suppressed noise count: ${snapshot.suppressedCount}`,
+    suppressedLine,
+    ...(degradedLine ? [degradedLine] : []),
     "",
     ...sections
       .filter(([, items]) => items.length > 0)

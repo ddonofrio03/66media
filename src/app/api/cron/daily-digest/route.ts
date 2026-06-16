@@ -4,8 +4,21 @@ import {
   renderDigestHtml,
   renderDigestText,
 } from "@/lib/digest";
+import { hasSentOn, markReported, recordSend } from "@/lib/digest-store";
 import { sendEmail } from "@/lib/email";
+import { monitoringConfig } from "@/lib/monitoring-config";
 import { getNewYorkParts, isDigestSendWindow, isWeekday } from "@/lib/time";
+import type { DigestSnapshot } from "@/lib/types";
+
+function shownItemIds(snapshot: DigestSnapshot) {
+  return [
+    ...snapshot.important,
+    ...snapshot.confirmed,
+    ...snapshot.likely,
+    ...snapshot.social,
+    ...snapshot.uncertain,
+  ].map((item) => item.id);
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -36,7 +49,18 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       skipped: true,
-      reason: "Not the 6:30 AM America/New_York send window.",
+      reason: "Outside the 6 AM America/New_York send window.",
+      local,
+    });
+  }
+
+  // Idempotency: if a digest already went out today, don't send a second one
+  // (e.g. if both crons drift into the 6 AM hour). Manual runs bypass this.
+  if (!allowManualRun && (await hasSentOn(local.dateKey))) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: "A digest has already been sent for this date.",
       local,
     });
   }
@@ -64,10 +88,24 @@ export async function GET(request: Request) {
     text: renderDigestText(snapshot),
   });
 
+  // Only record/stamp once the email actually went out, so a failed send is
+  // retried by the next invocation rather than being marked complete.
+  if (!("skipped" in result) || !result.skipped) {
+    await markReported(shownItemIds(snapshot), local.dateKey);
+    await recordSend({
+      dateKey: local.dateKey,
+      isWeekend: !weekday,
+      snapshot,
+      recipients: monitoringConfig.recipients,
+    });
+  }
+
   return NextResponse.json({
     ok: true,
     local,
     noRelevantCoverage: snapshot.noRelevantCoverage,
+    degradedProviders: snapshot.degradedProviders,
+    newItems: snapshot.newItemsCount,
     email: result,
   });
 }

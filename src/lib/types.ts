@@ -19,7 +19,6 @@ export type RelevanceLabel =
   | "confirmed_otb"
   | "likely_otb"
   | "uncertain_i66_segment"
-  | "related_toll_express_lane_issue"
   | "noise";
 
 export type DigestItem = {
@@ -47,4 +46,13 @@ export type DigestSnapshot = {
   uncertain: DigestItem[];
   suppressedCount: number;
   noRelevantCoverage: boolean;
+  // Providers (GDELT / Google News / Reddit) that errored on this run, so a
+  // silent collection failure is visible instead of looking like "no news".
+  degradedProviders: string[];
+  // Items shown in this digest that had never been emailed before. Items
+  // previously reported are suppressed unless they are `important`.
+  newItemsCount: number;
+  // Relevant items that were collected but suppressed because an earlier
+  // digest already reported them.
+  repeatedItemsCount: number;
 };

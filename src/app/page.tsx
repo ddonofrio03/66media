@@ -35,6 +35,12 @@ export default async function DashboardPage() {
             >
               Sources
             </Link>
+            <Link
+              href="/settings"
+              className="rounded-md border border-[var(--line)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold"
+            >
+              Keywords
+            </Link>
             <a
               href="/api/digest/preview"
               className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"

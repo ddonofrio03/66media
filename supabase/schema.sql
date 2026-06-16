@@ -45,5 +45,17 @@ create table if not exists public.digest_sends (
 
 create index if not exists digest_sends_sent_at_idx on public.digest_sends (sent_at desc);
 
+-- Editable monitoring keywords (single row). positive_keywords drive the
+-- searches and keep their matches; avoid_phrases suppress noise. Empty arrays
+-- fall back to the in-code defaults.
+create table if not exists public.monitoring_settings (
+  id                smallint primary key default 1,
+  positive_keywords text[] not null default '{}',
+  avoid_phrases     text[] not null default '{}',
+  updated_at        timestamptz not null default now(),
+  constraint monitoring_settings_singleton check (id = 1)
+);
+
 alter table public.digest_items enable row level security;
 alter table public.digest_sends enable row level security;
+alter table public.monitoring_settings enable row level security;

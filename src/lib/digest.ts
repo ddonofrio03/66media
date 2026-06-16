@@ -5,6 +5,7 @@ import {
   upsertCollectedItems,
 } from "@/lib/digest-store";
 import { monitoringConfig } from "@/lib/monitoring-config";
+import { getMonitoringSettings } from "@/lib/monitoring-settings";
 import { getSources } from "@/lib/sources";
 import { getDigestLookbackHours } from "@/lib/time";
 import type { DigestItem, DigestSnapshot } from "@/lib/types";
@@ -19,7 +20,8 @@ import type { DigestItem, DigestSnapshot } from "@/lib/types";
 export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
   const now = new Date();
   const sources = await getSources();
-  const collection = await collectDigestItems(sources, now);
+  const settings = await getMonitoringSettings();
+  const collection = await collectDigestItems(sources, now, settings);
   const collectedItems = collection.items;
 
   const reportedMap = await getReportedMap(

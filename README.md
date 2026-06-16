@@ -47,6 +47,10 @@ What it adds:
 - **History** — the dashboard and digest preview read the last stored snapshot
   instead of running a live external fetch on every page load. Live collection
   only happens in the cron job.
+- **Editable keywords** — the `/settings` page (the "Keywords" button) edits the
+  positive keywords (which drive the searches and keep their matches) and the
+  avoid phrases (noise filter), stored in `monitoring_settings`. Empty lists fall
+  back to the in-code defaults. Changes apply on the next digest run.
 
 ## Access control
 

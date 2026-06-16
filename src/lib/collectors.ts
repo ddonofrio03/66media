@@ -1,4 +1,7 @@
-import { monitoringConfig } from "@/lib/monitoring-config";
+import {
+  DEFAULT_SETTINGS,
+  type MonitoringSettings,
+} from "@/lib/monitoring-settings";
 import { getDigestLookbackHours } from "@/lib/time";
 import type { DigestItem, RelevanceLabel, Source } from "@/lib/types";
 
@@ -19,16 +22,8 @@ type CollectionResult = {
   degradedProviders: string[];
 };
 
-const EXACT_NEWS_QUERIES = [
-  '"66 Express Lanes"',
-  '"66 Outside the Beltway"',
-  '"I-66 outside the Beltway"',
-  '"66 Express Mobility Partners"',
-  '"66 EMP"',
-  "66EMP",
-  '"Transform 66 Outside the Beltway"',
-];
-
+// Built-in corridor net for incidents (crashes/closures), run in addition to
+// the editable positive keywords.
 const BROAD_NEWS_QUERY =
   '("I-66" OR "Interstate 66") (toll OR express OR lanes OR crash OR closure OR traffic) (Fairfax OR "Prince William" OR Gainesville OR Manassas OR Centreville OR Haymarket OR "Northern Virginia")';
 
@@ -53,12 +48,16 @@ const USER_AGENT =
 export async function collectDigestItems(
   sources: Source[],
   now = new Date(),
+  settings: MonitoringSettings = DEFAULT_SETTINGS,
 ): Promise<CollectionResult> {
+  const exactQueries = settings.positiveKeywords.map(quotePhrase);
+  const newsQueries = [...exactQueries, BROAD_NEWS_QUERY];
+
   const providers: Array<{ name: string; run: () => Promise<RawItem[]> }> = [
-    { name: "GDELT", run: collectGdeltArticles },
-    { name: "Google News", run: collectGoogleNewsItems },
-    { name: "Bing News", run: collectBingNewsItems },
-    { name: "Reddit", run: collectRedditItems },
+    { name: "GDELT", run: () => collectGdeltArticles(exactQueries) },
+    { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
+    { name: "Bing News", run: () => collectBingNewsItems(exactQueries) },
+    { name: "Reddit", run: () => collectRedditItems(exactQueries) },
   ];
 
   const settled = await Promise.allSettled(providers.map((p) => p.run()));
@@ -83,7 +82,7 @@ export async function collectDigestItems(
     isInsideDigestWindow(item.publishedAt, now, lookbackHours),
   );
   const items = timelyItems
-    .map((item) => classifyItem(item, sources))
+    .map((item) => classifyItem(item, sources, settings))
     .filter((item): item is DigestItem => Boolean(item))
     .sort(sortDigestItems);
 
@@ -94,7 +93,10 @@ export async function collectDigestItems(
   };
 }
 
-async function collectGdeltArticles(): Promise<RawItem[]> {
+async function collectGdeltArticles(exactQueries: string[]): Promise<RawItem[]> {
+  if (exactQueries.length === 0) {
+    return [];
+  }
   // GDELT is a best-effort bonus source. It rate-limits to ~1 request / 5s per
   // IP (Vercel shares IPs across projects, so 429s are common), is often slow,
   // and frequently returns no I-66 coverage at all. Any failure — 429, timeout,
@@ -102,7 +104,7 @@ async function collectGdeltArticles(): Promise<RawItem[]> {
   // the reliable backbone is Google News + Bing News + Reddit.
   try {
     const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
-    url.searchParams.set("query", `(${EXACT_NEWS_QUERIES.join(" OR ")})`);
+    url.searchParams.set("query", `(${exactQueries.join(" OR ")})`);
     url.searchParams.set("mode", "artlist");
     url.searchParams.set("format", "json");
     url.searchParams.set("maxrecords", "25");
@@ -134,8 +136,10 @@ async function collectGdeltArticles(): Promise<RawItem[]> {
   }
 }
 
-async function collectGoogleNewsItems(): Promise<RawItem[]> {
-  const queries = [...EXACT_NEWS_QUERIES, BROAD_NEWS_QUERY];
+async function collectGoogleNewsItems(queries: string[]): Promise<RawItem[]> {
+  if (queries.length === 0) {
+    return [];
+  }
   const results = await Promise.allSettled(
     queries.map((query) => collectGoogleNewsQuery(query)),
   );
@@ -166,10 +170,12 @@ async function collectGoogleNewsQuery(query: string): Promise<RawItem[]> {
   }));
 }
 
-async function collectBingNewsItems(): Promise<RawItem[]> {
+async function collectBingNewsItems(exactQueries: string[]): Promise<RawItem[]> {
   // A second, independent news feed so coverage does not depend on Google News
   // alone. Bing's news RSS works server-side without an API key.
-  const queries = [EXACT_NEWS_QUERIES.join(" OR "), BROAD_NEWS_QUERY];
+  const queries = exactQueries.length
+    ? [exactQueries.join(" OR "), BROAD_NEWS_QUERY]
+    : [BROAD_NEWS_QUERY];
   const results = await Promise.allSettled(
     queries.map((query) => collectBingNewsQuery(query)),
   );
@@ -198,15 +204,15 @@ async function collectBingNewsQuery(query: string): Promise<RawItem[]> {
   }));
 }
 
-async function collectRedditItems(): Promise<RawItem[]> {
+async function collectRedditItems(exactQueries: string[]): Promise<RawItem[]> {
+  if (exactQueries.length === 0) {
+    return [];
+  }
   // Reddit's JSON search (reddit.com/search.json) returns an HTML block page
   // from datacenter IPs like Vercel's. The old.reddit.com RSS (Atom) endpoint
   // is not blocked the same way, so use that instead.
   const url = new URL("https://old.reddit.com/search.rss");
-  url.searchParams.set(
-    "q",
-    '"66 Express Lanes" OR "66 Outside the Beltway" OR "66EMP" OR "I-66"',
-  );
+  url.searchParams.set("q", exactQueries.join(" OR "));
   url.searchParams.set("sort", "new");
   url.searchParams.set("limit", "25");
 
@@ -232,7 +238,11 @@ async function collectRedditItems(): Promise<RawItem[]> {
   }));
 }
 
-function classifyItem(item: RawItem, sources: Source[]): DigestItem | null {
+function classifyItem(
+  item: RawItem,
+  sources: Source[],
+  settings: MonitoringSettings,
+): DigestItem | null {
   if (!item.url || !item.title) {
     return null;
   }
@@ -241,15 +251,22 @@ function classifyItem(item: RawItem, sources: Source[]): DigestItem | null {
     [item.title, item.snippet, item.source, item.domain].join(" "),
   );
 
-  if (isLikelyNoise(combined)) {
+  // Avoid phrases win: suppress as noise regardless of any keyword match.
+  if (matchesAny(combined, settings.avoidPhrases)) {
     return null;
   }
 
   const sourceMatch = findSourceMatch(item, sources);
-  const label = determineLabel(combined);
+  let label = determineLabel(combined);
 
+  // A positive keyword the user is monitoring always keeps the item, even if
+  // the built-in I-66 classifier would have dropped it as noise.
   if (label === "noise") {
-    return null;
+    if (matchesAny(combined, settings.positiveKeywords)) {
+      label = "likely_otb";
+    } else {
+      return null;
+    }
   }
 
   const priority = isCritical(combined) ? "important" : "normal";
@@ -361,10 +378,16 @@ function findSourceMatch(item: RawItem, sources: Source[]) {
   });
 }
 
-function isLikelyNoise(text: string) {
-  return monitoringConfig.excludeTerms.some((term) =>
-    text.includes(normalizeText(term)),
-  );
+function matchesAny(text: string, terms: string[]) {
+  return terms.some((term) => {
+    const normalized = normalizeText(term);
+    return normalized.length > 0 && text.includes(normalized);
+  });
+}
+
+function quotePhrase(keyword: string) {
+  const cleaned = keyword.replace(/"/g, "").trim();
+  return `"${cleaned}"`;
 }
 
 function isCritical(text: string) {

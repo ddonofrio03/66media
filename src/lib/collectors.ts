@@ -57,6 +57,7 @@ export async function collectDigestItems(
   const providers: Array<{ name: string; run: () => Promise<RawItem[]> }> = [
     { name: "GDELT", run: collectGdeltArticles },
     { name: "Google News", run: collectGoogleNewsItems },
+    { name: "Bing News", run: collectBingNewsItems },
     { name: "Reddit", run: collectRedditItems },
   ];
 
@@ -94,25 +95,43 @@ export async function collectDigestItems(
 }
 
 async function collectGdeltArticles(): Promise<RawItem[]> {
-  const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
-  url.searchParams.set("query", `(${EXACT_NEWS_QUERIES.join(" OR ")})`);
-  url.searchParams.set("mode", "artlist");
-  url.searchParams.set("format", "json");
-  url.searchParams.set("maxrecords", "25");
-  url.searchParams.set("sort", "datedesc");
-  url.searchParams.set("timespan", "2d");
+  // GDELT is a best-effort bonus source. It rate-limits to ~1 request / 5s per
+  // IP (Vercel shares IPs across projects, so 429s are common), is often slow,
+  // and frequently returns no I-66 coverage at all. Any failure — 429, timeout,
+  // non-JSON notice — degrades to an empty result and never flags as degraded;
+  // the reliable backbone is Google News + Bing News + Reddit.
+  try {
+    const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
+    url.searchParams.set("query", `(${EXACT_NEWS_QUERIES.join(" OR ")})`);
+    url.searchParams.set("mode", "artlist");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("maxrecords", "25");
+    url.searchParams.set("sort", "datedesc");
+    url.searchParams.set("timespan", "2d");
 
-  const data = await fetchJson<{ articles?: GdeltArticle[] }>(url);
-  return (data.articles ?? []).map((article) => ({
-    title: article.title ?? "Untitled article",
-    source: article.domain ?? "GDELT",
-    url: article.url ?? "",
-    sourceType: "news",
-    snippet: article.title ?? "",
-    publishedAt: parseGdeltDate(article.seendate),
-    provider: "GDELT",
-    domain: article.domain,
-  }));
+    const response = await fetchWithTimeout(url);
+    if (!response.ok) {
+      console.warn(`[collectors] GDELT skipped (HTTP ${response.status})`);
+      return [];
+    }
+
+    const data = JSON.parse(await response.text()) as {
+      articles?: GdeltArticle[];
+    };
+    return (data.articles ?? []).map((article) => ({
+      title: article.title ?? "Untitled article",
+      source: article.domain ?? "GDELT",
+      url: article.url ?? "",
+      sourceType: "news",
+      snippet: article.title ?? "",
+      publishedAt: parseGdeltDate(article.seendate),
+      provider: "GDELT",
+      domain: article.domain,
+    }));
+  } catch (error) {
+    console.warn("[collectors] GDELT skipped:", error);
+    return [];
+  }
 }
 
 async function collectGoogleNewsItems(): Promise<RawItem[]> {
@@ -147,28 +166,67 @@ async function collectGoogleNewsQuery(query: string): Promise<RawItem[]> {
   }));
 }
 
+async function collectBingNewsItems(): Promise<RawItem[]> {
+  // A second, independent news feed so coverage does not depend on Google News
+  // alone. Bing's news RSS works server-side without an API key.
+  const queries = [EXACT_NEWS_QUERIES.join(" OR "), BROAD_NEWS_QUERY];
+  const results = await Promise.allSettled(
+    queries.map((query) => collectBingNewsQuery(query)),
+  );
+
+  if (results.every((result) => result.status === "rejected")) {
+    throw new Error("All Bing News queries failed");
+  }
+
+  return results.flatMap(unwrapSettled);
+}
+
+async function collectBingNewsQuery(query: string): Promise<RawItem[]> {
+  const url = new URL("https://www.bing.com/news/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "rss");
+
+  const xml = await fetchText(url);
+  return parseRssItems(xml).map((item) => ({
+    title: item.title || "Untitled article",
+    source: item.source || "Bing News",
+    url: item.link,
+    sourceType: "news",
+    snippet: item.description || item.title,
+    publishedAt: parseDate(item.pubDate),
+    provider: "Bing News",
+  }));
+}
+
 async function collectRedditItems(): Promise<RawItem[]> {
-  const url = new URL("https://www.reddit.com/search.json");
+  // Reddit's JSON search (reddit.com/search.json) returns an HTML block page
+  // from datacenter IPs like Vercel's. The old.reddit.com RSS (Atom) endpoint
+  // is not blocked the same way, so use that instead.
+  const url = new URL("https://old.reddit.com/search.rss");
   url.searchParams.set(
     "q",
     '"66 Express Lanes" OR "66 Outside the Beltway" OR "66EMP" OR "I-66"',
   );
   url.searchParams.set("sort", "new");
-  url.searchParams.set("t", "day");
   url.searchParams.set("limit", "25");
 
-  const data = await fetchJson<RedditSearchResponse>(url);
-  return (data.data?.children ?? []).map(({ data: post }) => ({
-    title: post.title ?? "Untitled Reddit post",
-    source: `r/${post.subreddit ?? "reddit"}`,
-    url: post.permalink?.startsWith("http")
-      ? post.permalink
-      : `https://www.reddit.com${post.permalink ?? ""}`,
+  const response = await fetchWithTimeout(url);
+  if (response.status === 429) {
+    console.warn("[collectors] Reddit rate-limited (429); skipping this run");
+    return [];
+  }
+  if (!response.ok) {
+    throw new Error(`Reddit request failed with ${response.status}`);
+  }
+
+  const xml = await response.text();
+  return parseAtomEntries(xml).map((entry) => ({
+    title: entry.title || "Untitled Reddit post",
+    source: entry.subreddit || "Reddit",
+    url: entry.link,
     sourceType: "social",
-    snippet: post.selftext || post.title || "",
-    publishedAt: post.created_utc
-      ? new Date(post.created_utc * 1000).toISOString()
-      : new Date().toISOString(),
+    snippet: entry.content || entry.title || "",
+    publishedAt: parseDate(entry.updated),
     provider: "Reddit",
     domain: "reddit.com",
   }));
@@ -394,17 +452,6 @@ function normalizeUrl(value: string) {
   }
 }
 
-async function fetchJson<T>(url: URL): Promise<T> {
-  const response = await fetchWithTimeout(url);
-  const text = await response.text();
-
-  if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}`);
-  }
-
-  return JSON.parse(text) as T;
-}
-
 async function fetchText(url: URL): Promise<string> {
   const response = await fetchWithTimeout(url);
   if (!response.ok) {
@@ -447,6 +494,26 @@ function parseRssItems(xml: string) {
   }
 
   return items.filter((item) => item.link && item.title);
+}
+
+function parseAtomEntries(xml: string) {
+  const entries: AtomEntry[] = [];
+  const entryMatches = xml.matchAll(/<entry\b[^>]*>([\s\S]*?)<\/entry>/gi);
+
+  for (const [, entryXml] of entryMatches) {
+    const link = entryXml.match(/<link\b[^>]*href="([^"]+)"/i)?.[1] ?? "";
+    const subreddit =
+      entryXml.match(/<category\b[^>]*label="([^"]+)"/i)?.[1] ?? "";
+    entries.push({
+      title: readXmlTag(entryXml, "title"),
+      link: decodeXml(link),
+      updated: readXmlTag(entryXml, "updated"),
+      content: stripTags(readXmlTag(entryXml, "content")),
+      subreddit: decodeXml(subreddit).trim(),
+    });
+  }
+
+  return entries.filter((entry) => entry.link && entry.title);
 }
 
 function readXmlTag(xml: string, tag: string) {
@@ -573,16 +640,10 @@ type RssItem = {
   source: string;
 };
 
-type RedditSearchResponse = {
-  data?: {
-    children?: Array<{
-      data: {
-        title?: string;
-        subreddit?: string;
-        permalink?: string;
-        selftext?: string;
-        created_utc?: number;
-      };
-    }>;
-  };
+type AtomEntry = {
+  title: string;
+  link: string;
+  updated: string;
+  content: string;
+  subreddit: string;
 };

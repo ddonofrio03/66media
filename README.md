@@ -48,6 +48,18 @@ What it adds:
   instead of running a live external fetch on every page load. Live collection
   only happens in the cron job.
 
+## Access control
+
+The whole site is behind a shared HTTP Basic Auth login (handled in
+`src/middleware.ts`). Set both env vars in Vercel to enable it:
+
+- `BASIC_AUTH_USER`
+- `BASIC_AUTH_PASSWORD`
+
+If either is unset the gate is disabled, so a missing variable can't lock
+everyone out. The cron endpoint (`/api/cron/daily-digest`) is excluded from the
+gate because Vercel's scheduler authenticates with `CRON_SECRET` instead.
+
 ## Development
 
 ```bash

@@ -145,27 +145,34 @@ async function collectFacebook(
   keywords: string[],
   token: string,
 ): Promise<RawItem[]> {
-  // Facebook open keyword search is fragile — actor input/output schemas vary,
-  // so we pass an OR query and read fields defensively. Best-effort by design.
-  const query = keywords.join(" OR ");
+  // apify/facebook-search-scraper takes keywords in `categories` (required) and
+  // caps with `resultsLimit`. It returns Facebook pages/results matching the
+  // terms (FB has no open *post* keyword search without a login). Output shape
+  // varies, so read fields defensively — covers post- and page-shaped results.
   const input = {
-    query,
-    searchQueries: keywords,
-    search: query,
-    maxItems: FB_MAX_ITEMS,
-    maxPosts: FB_MAX_ITEMS,
+    categories: keywords,
+    locations: [] as string[],
+    resultsLimit: FB_MAX_ITEMS,
   };
 
   const raw = await runActor(FB_ACTOR, input, token, FB_MAX_ITEMS);
   return raw.map((post) => {
     const text = str(
-      pick(post, ["text", "message", "content", "postText", "caption"]),
+      pick(post, [
+        "text", "message", "content", "postText", "caption",
+        "info", "intro", "description", "about",
+      ]),
     );
     const author = str(
-      pick(post, ["pageName", "user.name", "author.name", "authorName", "from.name"]),
+      pick(post, [
+        "pageName", "name", "title", "user.name", "author.name",
+        "authorName", "from.name",
+      ]),
     );
     const url = str(
-      pick(post, ["url", "postUrl", "link", "facebookUrl", "permalink"]),
+      pick(post, [
+        "url", "postUrl", "link", "facebookUrl", "permalink", "pageUrl",
+      ]),
     );
     return {
       title: text ? truncate(text, 120) : author ? `${author} on Facebook` : "Facebook post",

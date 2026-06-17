@@ -3,10 +3,11 @@ import {
   DEFAULT_SETTINGS,
   type MonitoringSettings,
 } from "@/lib/monitoring-settings";
+import { collectSocialItems } from "@/lib/social";
 import { getDigestLookbackHours } from "@/lib/time";
 import type { DigestItem, RelevanceLabel, Source } from "@/lib/types";
 
-type RawItem = {
+export type RawItem = {
   title: string;
   source: string;
   url: string;
@@ -66,6 +67,9 @@ export async function collectDigestItems(
     { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
     { name: "Bing News", run: () => collectBingNewsItems(exactQueries) },
     { name: "Reddit", run: () => collectRedditItems(exactQueries) },
+    // Apify X + Facebook keyword search. Self-gated behind SOCIAL_ENABLED —
+    // a silent [] when disabled, so it never flags as degraded until live.
+    { name: "Social (Apify)", run: () => collectSocialItems(settings, now) },
   ];
 
   const settled = await Promise.allSettled(providers.map((p) => p.run()));

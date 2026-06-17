@@ -22,7 +22,9 @@ function shownItemIds(snapshot: DigestSnapshot) {
 }
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+// 60s headroom: the Apify social actors run synchronously (~40s worst case) as
+// part of collection; 30s risked timing out the whole digest on a slow scrape.
+export const maxDuration = 60;
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");

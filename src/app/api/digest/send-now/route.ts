@@ -19,7 +19,8 @@ import type { DigestSnapshot } from "@/lib/types";
  */
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+// 60s headroom for the synchronous Apify social actors (see cron route note).
+export const maxDuration = 60;
 
 function shownItemIds(snapshot: DigestSnapshot) {
   return [

@@ -19,6 +19,10 @@ type RawItem = {
 
 type CollectionResult = {
   items: DigestItem[];
+  // Total items examined inside the digest time window (relevant + off-topic).
+  scannedCount: number;
+  // In-window items dropped as off-topic (the honest "noise" number).
+  offTopicCount: number;
   suppressedCount: number;
   degradedProviders: string[];
 };
@@ -92,6 +96,10 @@ export async function collectDigestItems(
 
   return {
     items,
+    // Honest split: items examined inside the time window vs. off-topic ones we
+    // dropped. Out-of-window (stale) items are NOT counted as "noise".
+    scannedCount: timelyItems.length,
+    offTopicCount: Math.max(timelyItems.length - items.length, 0),
     suppressedCount: Math.max(uniqueItems.length - items.length, 0),
     degradedProviders,
   };
@@ -478,14 +486,19 @@ function dedupeRawItems(items: RawItem[]) {
 
   for (const item of items) {
     const key = createStableId(item.url, item.title);
+    // The title key is scoped to the outlet so the SAME article pulled by
+    // multiple providers (Google News / Bing / direct feed) collapses to one,
+    // but the SAME headline from DIFFERENT outlets (syndicated press releases,
+    // wire copy) is kept as separate links — each is a real, distinct mention.
     const titleKey = canonicalTitleKey(item);
-    if (seen.has(key) || (titleKey && seenTitles.has(titleKey))) {
+    const outletTitleKey = titleKey ? `${titleKey}::${outletKey(item)}` : "";
+    if (seen.has(key) || (outletTitleKey && seenTitles.has(outletTitleKey))) {
       continue;
     }
 
     seen.add(key);
-    if (titleKey) {
-      seenTitles.add(titleKey);
+    if (outletTitleKey) {
+      seenTitles.add(outletTitleKey);
     }
     deduped.push(item);
   }
@@ -497,6 +510,20 @@ function canonicalTitleKey(item: RawItem) {
   const withoutSource = item.title.replace(/\s+-\s+[^-]+$/, "");
   const key = normalizeText(withoutSource);
   return key.length > 24 ? key : "";
+}
+
+/**
+ * Stable identity for the publication an item came from, used to keep the same
+ * headline from two different outlets as two links. Prefers the publisher name
+ * (reliable across providers — Google News reports it even behind a redirect
+ * URL) and falls back to the resolved host when the name is a generic provider.
+ */
+function outletKey(item: RawItem) {
+  const source = normalizeText(item.source);
+  if (source && source !== "google news" && source !== "bing news") {
+    return source;
+  }
+  return normalizeHost(item.domain || item.url) || source || "unknown";
 }
 
 function createStableId(url: string, title: string) {

@@ -82,6 +82,8 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
     social,
     uncertain,
     suppressedCount: collection.suppressedCount,
+    scannedCount: collection.scannedCount,
+    offTopicCount: collection.offTopicCount,
     noRelevantCoverage: shown.length === 0,
     degradedProviders: collection.degradedProviders,
     newItemsCount,
@@ -100,8 +102,8 @@ export async function loadDashboardSnapshot(): Promise<DigestSnapshot> {
   return stored ?? buildDigestSnapshot();
 }
 
-export function renderDigestHtml(snapshot: DigestSnapshot) {
-  const sections = [
+function digestSections(snapshot: DigestSnapshot) {
+  return [
     ["Important / Needs Review", snapshot.important],
     ["Confirmed 66 Outside the Beltway", snapshot.confirmed],
     ["Likely 66 Outside the Beltway", snapshot.likely],
@@ -109,6 +111,71 @@ export function renderDigestHtml(snapshot: DigestSnapshot) {
     ["Reddit and Public Social", snapshot.social],
     ["Uncertain / Possible Matches", snapshot.uncertain],
   ] as const;
+}
+
+/**
+ * Honest "what we looked at" numbers. `suppressedCount` historically mixed two
+ * very different things — items older than the time window (stale feed clutter)
+ * and in-window off-topic items — which made a quiet day read as if 369 stories
+ * were thrown away. Prefer the in-window scanned/off-topic split when present,
+ * falling back to legacy snapshots.
+ */
+function coverageStats(snapshot: DigestSnapshot) {
+  const offTopic = snapshot.offTopicCount ?? snapshot.suppressedCount;
+  const scanned =
+    snapshot.scannedCount ?? snapshot.totalRelevantCount + snapshot.suppressedCount;
+  return { scanned, offTopic, relevant: snapshot.totalRelevantCount };
+}
+
+/**
+ * One-line "why so few" footnote. Reframes a quiet day as "we checked N, this is
+ * what was relevant" rather than "369 suppressed", which reads like a failure.
+ */
+function coverageFootnote(snapshot: DigestSnapshot) {
+  const { scanned, offTopic, relevant } = coverageStats(snapshot);
+  const repeated =
+    snapshot.repeatedItemsCount > 0
+      ? ` · ${snapshot.repeatedItemsCount} already-reported ${snapshot.repeatedItemsCount === 1 ? "item" : "items"} not repeated`
+      : "";
+  return `Screened ${scanned} recent ${scanned === 1 ? "item" : "items"} from this window — ${relevant} relevant, ${offTopic} off-topic.${repeated}`;
+}
+
+/**
+ * "At a glance" summary table — mirrors Meltwater's anchor block so a reader can
+ * see the shape of the day (how many items per bucket) before scrolling. Only
+ * renders buckets that have items, plus a relevant/scanned scoreboard.
+ */
+function renderSummary(snapshot: DigestSnapshot) {
+  const { scanned, offTopic } = coverageStats(snapshot);
+  const rows = digestSections(snapshot)
+    .filter(([, items]) => items.length > 0)
+    .map(
+      ([title, items]) =>
+        `<tr>
+          <td style="padding:10px 14px;border-bottom:1px solid #eef2f1;font-size:14px;">${escapeHtml(title)}</td>
+          <td style="padding:10px 14px;border-bottom:1px solid #eef2f1;font-size:14px;font-weight:bold;text-align:right;color:#0f766e;">${items.length}</td>
+        </tr>`,
+    )
+    .join("");
+
+  return `<section style="background:#fff;border:1px solid #dce3e0;border-radius:8px;padding:8px 6px;margin-bottom:16px;">
+    <table style="width:100%;border-collapse:collapse;">
+      <tbody>${rows}
+        <tr>
+          <td style="padding:10px 14px;font-size:13px;color:#66706d;">Relevant items shown</td>
+          <td style="padding:10px 14px;font-size:13px;color:#66706d;text-align:right;">${snapshot.totalRelevantCount}</td>
+        </tr>
+        <tr>
+          <td style="padding:0 14px 10px;font-size:13px;color:#66706d;">Recent items screened</td>
+          <td style="padding:0 14px 10px;font-size:13px;color:#66706d;text-align:right;">${scanned} (${offTopic} off-topic)</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>`;
+}
+
+export function renderDigestHtml(snapshot: DigestSnapshot) {
+  const sections = digestSections(snapshot);
 
   return `<!doctype html>
 <html>
@@ -116,6 +183,7 @@ export function renderDigestHtml(snapshot: DigestSnapshot) {
     <main style="max-width:720px;margin:0 auto;padding:28px 20px;">
       <h1 style="font-size:24px;line-height:1.2;margin:0 0 8px;">66EMP Daily Media Digest</h1>
       <p style="color:#66706d;margin:0 0 24px;">Monitoring window: ${escapeHtml(snapshot.windowLabel)}</p>
+      ${snapshot.noRelevantCoverage ? "" : renderSummary(snapshot)}
       ${
         snapshot.noRelevantCoverage
           ? `<section style="background:#fff;border:1px solid #dce3e0;border-radius:8px;padding:20px;">
@@ -132,25 +200,14 @@ export function renderDigestHtml(snapshot: DigestSnapshot) {
           ? `<p style="color:#b45309;font-size:12px;margin-top:24px;">⚠ Some sources failed this run and may be missing: ${escapeHtml(snapshot.degradedProviders.join(", "))}.</p>`
           : ""
       }
-      <p style="color:#66706d;font-size:12px;margin-top:24px;">Suppressed noise count: ${snapshot.suppressedCount}${
-        snapshot.repeatedItemsCount > 0
-          ? ` · ${snapshot.repeatedItemsCount} already-reported ${snapshot.repeatedItemsCount === 1 ? "item" : "items"} not repeated`
-          : ""
-      }</p>
+      <p style="color:#66706d;font-size:12px;margin-top:24px;">${escapeHtml(coverageFootnote(snapshot))}</p>
     </main>
   </body>
 </html>`;
 }
 
 export function renderDigestText(snapshot: DigestSnapshot) {
-  const sections = [
-    ["Important / Needs Review", snapshot.important],
-    ["Confirmed 66 Outside the Beltway", snapshot.confirmed],
-    ["Likely 66 Outside the Beltway", snapshot.likely],
-    ["TV, Radio & Broadcast", snapshot.broadcast ?? []],
-    ["Reddit and Public Social", snapshot.social],
-    ["Uncertain / Possible Matches", snapshot.uncertain],
-  ] as const;
+  const sections = digestSections(snapshot);
 
   const degradedLine =
     snapshot.degradedProviders.length > 0
@@ -168,15 +225,19 @@ export function renderDigestText(snapshot: DigestSnapshot) {
     ].join("\n");
   }
 
-  const suppressedLine =
-    snapshot.repeatedItemsCount > 0
-      ? `Suppressed noise count: ${snapshot.suppressedCount} · ${snapshot.repeatedItemsCount} already-reported not repeated`
-      : `Suppressed noise count: ${snapshot.suppressedCount}`;
+  const suppressedLine = coverageFootnote(snapshot);
+
+  const glanceLines = sections
+    .filter(([, items]) => items.length > 0)
+    .map(([title, items]) => `  ${title}: ${items.length}`);
 
   return [
     "66EMP Daily Media Digest",
     "",
     `Monitoring window: ${snapshot.windowLabel}`,
+    "",
+    "At a glance",
+    ...glanceLines,
     suppressedLine,
     ...(degradedLine ? [degradedLine] : []),
     "",
@@ -194,24 +255,52 @@ function renderSection(title: string, items: DigestItem[]) {
 }
 
 function renderItem(item: DigestItem) {
+  const snippet = cleanSnippet(item);
   return `<article style="border-top:1px solid #dce3e0;padding-top:12px;margin-top:12px;">
     <h3 style="font-size:16px;margin:0 0 6px;"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" style="color:#0f766e;text-decoration:none;">${escapeHtml(item.title)}</a></h3>
     <p style="color:#66706d;font-size:13px;margin:0 0 6px;">${escapeHtml(item.source)} · ${escapeHtml(formatItemDate(item.publishedAt))} · ${escapeHtml(item.reason)}</p>
-    <p style="margin:0;line-height:1.45;">${escapeHtml(item.snippet)}</p>
+    ${snippet ? `<p style="margin:0;line-height:1.45;">${escapeHtml(snippet)}</p>` : ""}
   </article>`;
+}
+
+/**
+ * Strips the redundant excerpt many providers (esp. Google News RSS) return,
+ * where the "description" is just "<title> <source>" — an echo, not a lede.
+ * Returns the snippet only when it adds information beyond the title/source.
+ */
+function cleanSnippet(item: DigestItem): string {
+  const snippet = item.snippet?.trim() ?? "";
+  if (!snippet) return "";
+
+  const norm = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  let body = norm(snippet);
+  const title = norm(item.title);
+  const source = norm(item.source);
+
+  // Drop a leading title echo, then a trailing/leading source-name echo.
+  if (body.startsWith(title)) body = body.slice(title.length).trim();
+  if (source && body.endsWith(source)) body = body.slice(0, -source.length).trim();
+  if (source && body.startsWith(source)) body = body.slice(source.length).trim();
+
+  // Whatever remains is too thin to be a real excerpt — suppress it.
+  if (body.replace(/[\s.,–-]/g, "").length < 8) return "";
+  return snippet;
 }
 
 function renderTextSection(title: string, items: DigestItem[]) {
   return [
     title,
     "-".repeat(title.length),
-    ...items.flatMap((item) => [
-      `${item.title}`,
-      `${item.source} | ${formatItemDate(item.publishedAt)} | ${item.reason}`,
-      `${item.url}`,
-      item.snippet,
-      "",
-    ]),
+    ...items.flatMap((item) => {
+      const snippet = cleanSnippet(item);
+      return [
+        `${item.title}`,
+        `${item.source} | ${formatItemDate(item.publishedAt)} | ${item.reason}`,
+        `${item.url}`,
+        ...(snippet ? [snippet] : []),
+        "",
+      ];
+    }),
   ];
 }
 

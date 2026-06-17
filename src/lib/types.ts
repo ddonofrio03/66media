@@ -46,6 +46,11 @@ export type DigestSnapshot = {
   social: DigestItem[];
   uncertain: DigestItem[];
   suppressedCount: number;
+  // Items examined inside the time window (relevant + off-topic), and the
+  // off-topic subset. Lets the digest say "scanned N, 1 relevant" instead of an
+  // alarming "suppressed 369" that also counts stale, out-of-window feed items.
+  scannedCount?: number;
+  offTopicCount?: number;
   noRelevantCoverage: boolean;
   // Providers (GDELT / Google News / Reddit) that errored on this run, so a
   // silent collection failure is visible instead of looking like "no news".

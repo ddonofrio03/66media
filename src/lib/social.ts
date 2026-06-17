@@ -19,11 +19,18 @@ const APIFY_BASE = "https://api.apify.com/v2";
 // code change (Apify actors come and go, especially for Facebook).
 const X_ACTOR = process.env.APIFY_X_ACTOR || "apidojo/tweet-scraper";
 const FB_ACTOR = process.env.APIFY_FB_ACTOR || "apify/facebook-search-scraper";
+// LinkedIn has no open keyword search, so we run in "company-page mode": scrape
+// the recent posts of specific pages (LINKEDIN_PAGES) with a cookie-free
+// company-posts actor. No login, ToS-friendly — but only the pages' own posts,
+// not public mentions of "66".
+const LINKEDIN_ACTOR =
+  process.env.APIFY_LINKEDIN_ACTOR || "apimaestro/linkedin-company-posts";
 
 // Per-run caps. X is the backbone so it gets the larger share; the combined
 // result is sliced to TOTAL_CAP afterward. Lower these to spend less.
 const X_MAX_ITEMS = 35;
 const FB_MAX_ITEMS = 20;
+const LINKEDIN_MAX_PER_PAGE = 5;
 const TOTAL_CAP = 50;
 
 // run-sync-get-dataset-items blocks until the actor finishes. Keep it well under
@@ -66,6 +73,13 @@ export async function collectSocialItems(
     { name: "X", run: () => collectX(keywords, token) },
     { name: "Facebook", run: () => collectFacebook(keywords, token) },
   ];
+
+  // LinkedIn only runs when pages are configured — no point calling the actor
+  // (and being billed) with nothing to scrape.
+  const pages = linkedinPages();
+  if (pages.length > 0) {
+    tasks.push({ name: "LinkedIn", run: () => collectLinkedIn(pages, token) });
+  }
 
   const settled = await Promise.allSettled(tasks.map((t) => t.run()));
 
@@ -166,6 +180,83 @@ async function collectFacebook(
       domain: "facebook.com",
     };
   }).filter((item) => item.url);
+}
+
+// Company pages to monitor, from LINKEDIN_PAGES (comma-separated). Accepts bare
+// slugs ("66-express") or full URLs — the actor mapper normalizes either.
+function linkedinPages(): string[] {
+  return (process.env.LINKEDIN_PAGES || "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+async function collectLinkedIn(
+  pages: string[],
+  token: string,
+): Promise<RawItem[]> {
+  // One actor call per page (the list is small). Best-effort: a page that fails
+  // or returns junk is skipped, and the defensive mapper tolerates schema drift
+  // the same way the Facebook path does.
+  const settled = await Promise.allSettled(
+    pages.map((page) => collectLinkedInPage(page, token)),
+  );
+  return settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+}
+
+async function collectLinkedInPage(
+  page: string,
+  token: string,
+): Promise<RawItem[]> {
+  const identifier = linkedinSlug(page);
+  // Different company-posts actors name the company input differently; send the
+  // common keys so a swapped-in actor still works without a code change.
+  const input = {
+    username: identifier,
+    company_name: identifier,
+    identifier,
+    companyUrl: page.startsWith("http")
+      ? page
+      : `https://www.linkedin.com/company/${identifier}`,
+    limit: LINKEDIN_MAX_PER_PAGE,
+    maxItems: LINKEDIN_MAX_PER_PAGE,
+    page_number: 1,
+  };
+
+  const raw = await runActor(LINKEDIN_ACTOR, input, token, LINKEDIN_MAX_PER_PAGE);
+  return raw
+    .map((post) => {
+      const text = str(
+        pick(post, ["text", "content", "commentary", "postText", "description"]),
+      );
+      const author = str(
+        pick(post, ["companyName", "company.name", "authorName", "author.name"]),
+      ) || identifier;
+      const url = str(
+        pick(post, ["url", "postUrl", "linkedinUrl", "shareUrl", "link"]),
+      );
+      return {
+        title: text
+          ? truncate(text, 120)
+          : `${author} on LinkedIn`,
+        source: author,
+        url,
+        sourceType: "social" as const,
+        snippet: text,
+        publishedAt: toIso(
+          pick(post, ["postedAtISO", "postedAt", "date", "time", "publishedAt"]),
+        ),
+        provider: "LinkedIn (Apify)",
+        domain: "linkedin.com",
+      };
+    })
+    .filter((item) => item.url);
+}
+
+// Reduce a page URL or slug to its company identifier for the actor input.
+function linkedinSlug(page: string): string {
+  const match = page.match(/linkedin\.com\/(?:company|school)\/([^/?#]+)/i);
+  return (match ? match[1] : page).trim();
 }
 
 /**

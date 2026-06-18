@@ -19,6 +19,38 @@ export const monitoringConfig = {
     "66EMP",
     "Transform 66 Outside the Beltway",
   ],
+  // Parent / operator companies behind the I-66 concession. Coverage that
+  // mentions these but NOT the facility directly is routed to "Related Stories"
+  // — and only kept when it also ties back to our corridor (see
+  // operatorContextTerms), so European/airport/Polish corporate news is dropped.
+  operatorEntities: [
+    "Ferrovial",
+    "Cintra",
+    "Meridiam",
+    "FAM Construction",
+    "Ferrovial Construction",
+  ],
+  // The "tie back to our corridor" gate for operator-entity matches.
+  operatorContextTerms: [
+    "i-66",
+    "interstate 66",
+    "outside the beltway",
+    "66 express",
+    "express lanes",
+    "managed lanes",
+    "virginia",
+    "northern virginia",
+    "nova",
+    "fairfax",
+    "prince william",
+    "gainesville",
+    "manassas",
+    "centreville",
+    "haymarket",
+    "washington",
+    "d.c.",
+    "toll road",
+  ],
   uncertaintyTerms: [
     "I-66",
     "Route 66",

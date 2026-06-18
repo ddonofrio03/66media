@@ -1,4 +1,5 @@
 import { MEDIA_FEEDS, type FeedSource } from "@/lib/feeds";
+import { monitoringConfig } from "@/lib/monitoring-config";
 import {
   DEFAULT_SETTINGS,
   type MonitoringSettings,
@@ -324,6 +325,19 @@ function classifyItem(
   const sourceMatch = findSourceMatch(item, sources);
   let label = determineLabel(combined);
 
+  // Parent/operator coverage (Ferrovial/Cintra/Meridiam/FAM) that does NOT name
+  // the facility directly routes to "Related Stories" — but only when it also
+  // ties back to our corridor. Bare European/airport/Polish corporate news is
+  // dropped. Checked before the generic positive-keyword keep so these entities
+  // don't masquerade as direct I-66 coverage.
+  if (label === "noise" && matchesAny(combined, monitoringConfig.operatorEntities)) {
+    if (matchesAny(combined, monitoringConfig.operatorContextTerms)) {
+      label = "related";
+    } else {
+      return null;
+    }
+  }
+
   // A positive keyword the user is monitoring always keeps the item, even if
   // the built-in I-66 classifier would have dropped it as noise.
   if (label === "noise") {
@@ -334,7 +348,10 @@ function classifyItem(
     }
   }
 
-  const priority = isCritical(combined) ? "important" : "normal";
+  // Operator/industry context stays in its own bucket — don't escalate it to the
+  // "Important / Needs Review" lane even if it trips a critical term.
+  const priority =
+    label !== "related" && isCritical(combined) ? "important" : "normal";
   const reason = buildReason(label, sourceMatch);
 
   return {
@@ -418,6 +435,7 @@ function buildReason(
     confirmed_otb: "Strong Outside the Beltway / 66EMP match",
     likely_otb: "Likely I-66 Express Lanes or corridor match",
     uncertain_i66_segment: "Mentions I-66, but the exact road segment is unclear",
+    related: "Operator/parent coverage (Ferrovial/Cintra/Meridiam) tied to the corridor",
     noise: "Suppressed as unrelated",
   };
 
@@ -466,8 +484,9 @@ function sortDigestItems(a: DigestItem, b: DigestItem) {
   const labelOrder: Record<RelevanceLabel, number> = {
     confirmed_otb: 0,
     likely_otb: 1,
-    uncertain_i66_segment: 2,
-    noise: 3,
+    related: 2,
+    uncertain_i66_segment: 3,
+    noise: 4,
   };
 
   const priorityDelta = priorityOrder[a.priority] - priorityOrder[b.priority];

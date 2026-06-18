@@ -19,6 +19,8 @@ export type RelevanceLabel =
   | "confirmed_otb"
   | "likely_otb"
   | "uncertain_i66_segment"
+  // Parent/operator (Ferrovial/Cintra/Meridiam) coverage tied to the corridor.
+  | "related"
   | "noise";
 
 export type DigestItem = {
@@ -42,6 +44,8 @@ export type DigestSnapshot = {
   important: DigestItem[];
   confirmed: DigestItem[];
   likely: DigestItem[];
+  // Parent/operator (Ferrovial/Cintra/Meridiam) coverage tied to the corridor.
+  related?: DigestItem[];
   broadcast: DigestItem[];
   social: DigestItem[];
   uncertain: DigestItem[];

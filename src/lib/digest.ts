@@ -51,6 +51,14 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
       item.sourceType !== "broadcast" &&
       item.label === "likely_otb",
   );
+  // Parent/operator (Ferrovial/Cintra/Meridiam) coverage tied to the corridor.
+  const related = shown.filter(
+    (item) =>
+      item.priority !== "important" &&
+      item.sourceType !== "social" &&
+      item.sourceType !== "broadcast" &&
+      item.label === "related",
+  );
   // TV & radio (direct station feeds + YouTube segments), kept together in
   // their own section regardless of relevance label.
   const broadcast = shown.filter(
@@ -78,6 +86,7 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
     important,
     confirmed,
     likely,
+    related,
     broadcast,
     social,
     uncertain,
@@ -107,6 +116,7 @@ function digestSections(snapshot: DigestSnapshot) {
     ["Important / Needs Review", snapshot.important],
     ["Confirmed 66 Outside the Beltway", snapshot.confirmed],
     ["Likely 66 Outside the Beltway", snapshot.likely],
+    ["Related Stories (operator / industry)", snapshot.related ?? []],
     ["TV, Radio & Broadcast", snapshot.broadcast ?? []],
     ["Reddit and Public Social", snapshot.social],
     ["Uncertain / Possible Matches", snapshot.uncertain],

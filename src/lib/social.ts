@@ -33,6 +33,15 @@ const FB_MAX_ITEMS = 20;
 const LINKEDIN_MAX_PER_PAGE = 5;
 const TOTAL_CAP = 50;
 
+// Broad, recall-oriented X searches run alongside the exact brand phrases. These
+// catch how people actually tweet about the corridor ("the I-66 toll was $40");
+// the shared relevance classifier then drops the off-topic hits (Route 66, etc.).
+const X_BROAD_QUERIES = [
+  '"66 Express Lanes" OR "I-66 Express" OR "66 Express"',
+  '"I-66" (toll OR tolls OR lanes OR express OR traffic OR crash OR closure OR commute)',
+  '"Interstate 66" (toll OR lanes OR Virginia OR traffic)',
+];
+
 // run-sync-get-dataset-items blocks until the actor finishes. Keep it well under
 // the route's maxDuration (60s) so a slow scrape degrades to "no social this
 // run" instead of timing out the whole digest. The actor's own run is also
@@ -108,10 +117,16 @@ export async function collectSocialItems(
 }
 
 async function collectX(keywords: string[], token: string): Promise<RawItem[]> {
+  // The exact brand phrases ("66 EMP", "66 Outside the Beltway") almost never
+  // appear verbatim in tweets, so searching only those returns noResults. Mirror
+  // the news collector: pair the precise phrases with broad, recall-oriented
+  // corridor queries and let the shared classifier filter for relevance.
+  const searchTerms = [...keywords.map((k) => `"${k.replace(/"/g, "")}"`), ...X_BROAD_QUERIES];
+
   // apidojo/tweet-scraper takes an array of search terms and returns the latest
   // matching tweets, billed per result. We ask for English, sorted newest.
   const input = {
-    searchTerms: keywords,
+    searchTerms,
     sort: "Latest",
     maxItems: X_MAX_ITEMS,
     tweetLanguage: "en",

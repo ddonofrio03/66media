@@ -13,7 +13,12 @@ name: Real-time media poll
 on:
   schedule:
     - cron: "*/10 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      include_social:
+        description: "Also run the pay-per-result social actors (FB watchlist)"
+        type: boolean
+        default: false
 
 jobs:
   poll:
@@ -30,6 +35,10 @@ jobs:
             echo "using the same value as the Vercel CRON_SECRET env var."
             exit 0
           fi
+          SOCIAL_PARAM=""
+          if [ "${{ inputs.include_social }}" = "true" ]; then
+            SOCIAL_PARAM="?social=1"
+          fi
           curl -fsS --max-time 90 \
             -H "Authorization: Bearer $CRON_SECRET" \
-            "https://66media.vercel.app/api/cron/poll"
+            "https://66media.vercel.app/api/cron/poll$SOCIAL_PARAM"

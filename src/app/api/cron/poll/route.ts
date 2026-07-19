@@ -43,8 +43,11 @@ export async function GET(request: Request) {
   const now = new Date();
   const sources = await getSources();
   const settings = await getMonitoringSettings();
+  // ?social=1: manual verification runs only — also fire the pay-per-result
+  // Apify actors (FB watchlist etc.) that normally run daily-digest-only.
+  const includeSocial = request.url.includes("social=1");
   const collection = await collectDigestItems(sources, now, settings, {
-    includeSocial: false,
+    includeSocial,
     refine: false,
   });
 

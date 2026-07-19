@@ -34,6 +34,37 @@ export async function getReportedMap(
 }
 
 /**
+ * Which of these ids already exist in digest_items. Used by the real-time
+ * poller to detect genuinely-new items (returns null when Supabase is not
+ * configured, so the caller can tell "no persistence" apart from "all new").
+ */
+export async function getExistingIds(
+  ids: string[],
+): Promise<Set<string> | null> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return null;
+  }
+  if (ids.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await supabase
+    .from("digest_items")
+    .select("id")
+    .in("id", ids);
+
+  if (error) {
+    console.error("[digest-store] getExistingIds failed:", error.message);
+    // Fail closed: treating everything as "existing" prevents duplicate
+    // alerts; the daily digest still catches anything a failed poll missed.
+    return new Set(ids);
+  }
+
+  return new Set((data ?? []).map((row) => row.id as string));
+}
+
+/**
  * Upsert collected items. Deliberately omits `reported_on` from the payload so
  * an existing item's reported date is preserved across runs; only `last_seen_at`
  * and the mutable display fields are refreshed.

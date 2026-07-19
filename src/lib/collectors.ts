@@ -54,11 +54,23 @@ const CRITICAL_PRIORITY_TERMS = [
 const USER_AGENT =
   "66EMP media monitor; contact ddonofrio@thecaseygroup.us";
 
+export type CollectionOptions = {
+  // Skip the Apify social actors (pay-per-result billing). The 10-minute
+  // poller sets this false so actors only run on the daily digest.
+  includeSocial?: boolean;
+  // Skip the AI refinement pass. The poller sets this false and refines only
+  // the genuinely-new items itself, so repeat borderline items aren't
+  // re-classified every 10 minutes.
+  refine?: boolean;
+};
+
 export async function collectDigestItems(
   sources: Source[],
   now = new Date(),
   settings: MonitoringSettings = DEFAULT_SETTINGS,
+  options: CollectionOptions = {},
 ): Promise<CollectionResult> {
+  const { includeSocial = true, refine = true } = options;
   const exactQueries = settings.positiveKeywords.map(quotePhrase);
   const newsQueries = [...exactQueries, BROAD_NEWS_QUERY];
 
@@ -70,10 +82,15 @@ export async function collectDigestItems(
     { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
     { name: "Bing News", run: () => collectBingNewsItems(exactQueries) },
     { name: "Reddit", run: () => collectRedditItems(exactQueries) },
+  ];
+  if (includeSocial) {
     // Apify X + Facebook keyword search. Self-gated behind SOCIAL_ENABLED —
     // a silent [] when disabled, so it never flags as degraded until live.
-    { name: "Social (Apify)", run: () => collectSocialItems(settings, now) },
-  ];
+    providers.push({
+      name: "Social (Apify)",
+      run: () => collectSocialItems(settings, now),
+    });
+  }
 
   const settled = await Promise.allSettled(providers.map((p) => p.run()));
   const rawItems: RawItem[] = [];
@@ -109,9 +126,8 @@ export async function collectDigestItems(
   // Second opinion on the borderline (uncertain/likely) items via Claude
   // Haiku — no-op unless ANTHROPIC_API_KEY is configured. Re-sort afterward
   // since labels may have changed.
-  const items = (await refineClassifications(ruleClassified)).sort(
-    sortDigestItems,
-  );
+  const refined = refine ? await refineClassifications(ruleClassified) : ruleClassified;
+  const items = refined.sort(sortDigestItems);
 
   return {
     items,

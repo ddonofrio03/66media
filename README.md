@@ -71,6 +71,18 @@ npm install
 npm run dev
 ```
 
+## Real-time polling + alerts
+
+`/api/cron/poll` (same `CRON_SECRET` Bearer auth) collects every source except
+the pay-per-result social actors, diffs against the Supabase archive, stores
+genuinely-new items, and sends alerts for the high-signal subset (important,
+confirmed OTB, or broadcast likely). Alerts go to Pushover when
+`PUSHOVER_APP_TOKEN` + `PUSHOVER_USER_KEY` are set, else fall back to a Resend
+email. It is driven by `.github/workflows/poll.yml` every ~10 minutes (GitHub
+Actions, since Vercel Hobby crons are daily-only) — the workflow needs a repo
+Actions secret `CRON_SECRET` matching the Vercel env var. Requires Supabase;
+without it the poller no-ops rather than re-alerting the same stories.
+
 ## Cron
 
 Vercel calls `/api/cron/daily-digest` at 10:30 and 11:30 UTC. Across DST exactly

@@ -5,6 +5,8 @@ import {
   type MonitoringSettings,
 } from "@/lib/monitoring-settings";
 import { collectSocialItems } from "@/lib/social";
+import { enrichYouTubeTranscripts } from "@/lib/youtube-captions";
+import { refineClassifications } from "@/lib/ai-classify";
 import { getDigestLookbackHours } from "@/lib/time";
 import type { DigestItem, RelevanceLabel, Source } from "@/lib/types";
 
@@ -94,10 +96,22 @@ export async function collectDigestItems(
   const timelyItems = uniqueItems.filter((item) =>
     isInsideDigestWindow(item.publishedAt, now, lookbackHours),
   );
-  const items = timelyItems
+
+  // TV segments on YouTube: fetch auto-captions for recent uploads whose
+  // title/description doesn't already match, so on-air-only mentions are
+  // caught. Best-effort — mutates snippet/url on matched items only.
+  await enrichYouTubeTranscripts(timelyItems, settings.positiveKeywords);
+
+  const ruleClassified = timelyItems
     .map((item) => classifyItem(item, sources, settings))
-    .filter((item): item is DigestItem => Boolean(item))
-    .sort(sortDigestItems);
+    .filter((item): item is DigestItem => Boolean(item));
+
+  // Second opinion on the borderline (uncertain/likely) items via Claude
+  // Haiku — no-op unless ANTHROPIC_API_KEY is configured. Re-sort afterward
+  // since labels may have changed.
+  const items = (await refineClassifications(ruleClassified)).sort(
+    sortDigestItems,
+  );
 
   return {
     items,

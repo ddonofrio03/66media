@@ -29,8 +29,7 @@ export type FeedSource = {
 
 // Each URL below was confirmed to return valid XML with live items. WUSA9's
 // /rss hub, NBC4's bare ?rss=y, and the 66 Express sub-category feeds were
-// dropped because they 404'd or returned no items. Fox5 and WJLA expose no
-// usable RSS, so those stations are covered via their YouTube feeds only.
+// dropped because they 404'd or returned no items.
 export const MEDIA_FEEDS: FeedSource[] = [
   // Radio — WTOP is the priority: DC's all-news traffic station, multiple
   // I-66-relevant category feeds.
@@ -42,10 +41,22 @@ export const MEDIA_FEEDS: FeedSource[] = [
   { name: "Federal News Network", url: "https://federalnewsnetwork.com/feed/", kind: "rss", medium: "Radio", domain: "federalnewsnetwork.com" },
   { name: "WMAL", url: "https://www.wmal.com/feed/", kind: "rss", medium: "Radio", domain: "wmal.com" },
 
-  // TV — station newsroom feeds (Fox5/WJLA have no RSS; see YouTube below).
+  // TV — station newsroom feeds. FOX5 and WJLA DO have working RSS (verified
+  // 2026-07: fox5dc.com/rss/... 16 items, wjla.com/news/local.rss 41 items),
+  // despite earlier notes saying otherwise.
   { name: "NBC4 Washington", url: "https://www.nbcwashington.com/news/local/?rss=y", kind: "rss", medium: "TV", domain: "nbcwashington.com" },
   { name: "WUSA9", url: "https://www.wusa9.com/feeds/syndication/rss/news/local", kind: "rss", medium: "TV", domain: "wusa9.com" },
+  { name: "FOX 5 DC", url: "https://www.fox5dc.com/rss/category/local-news", kind: "rss", medium: "TV", domain: "fox5dc.com" },
+  { name: "7News WJLA", url: "https://wjla.com/news/local.rss", kind: "rss", medium: "TV", domain: "wjla.com" },
   { name: "DC News Now", url: "https://www.dcnewsnow.com/feed/", kind: "rss", medium: "TV", domain: "dcnewsnow.com" },
+
+  // Local online outlets with heavy I-66 corridor coverage. Pulled directly so
+  // coverage does not depend on Google/Bing indexing them. All verified live.
+  { name: "Potomac Local", url: "https://potomaclocal.com/feed/", kind: "rss", medium: "Online", domain: "potomaclocal.com" },
+  { name: "Inside NoVa", url: "https://www.insidenova.com/search/?f=rss", kind: "rss", medium: "Online", domain: "insidenova.com" },
+  { name: "FFXnow", url: "https://ffxnow.com/feed/", kind: "rss", medium: "Online", domain: "ffxnow.com" },
+  { name: "ARLnow", url: "https://www.arlnow.com/feed/", kind: "rss", medium: "Online", domain: "arlnow.com" },
+  { name: "ALXnow", url: "https://www.alxnow.com/feed/", kind: "rss", medium: "Online", domain: "alxnow.com" },
 
   // Agency / operator — flows into the normal news buckets, not broadcast.
   { name: "66 Express (operator)", url: "https://ride66express.com/feed/", kind: "rss", medium: "Agency", domain: "ride66express.com" },

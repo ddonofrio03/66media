@@ -87,12 +87,16 @@ textarea {
   word-break: normal;
 }
 
+/* 66 Express Outside the Beltway brand system (Brand Usage Guidelines,
+   Feb 2023): blue #105cae, orange #ee7729, gold #f8a829, warm gray #d0ccc9.
+   Headings are uppercase blue over the signature orange dashed rule. */
+
 .report-page + .report-page {
-  border-top: 1px solid #d4ded9;
+  border-top: 1px solid #d0ccc9;
 }
 
 .report-kicker {
-  color: #13806f;
+  color: #ee7729;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.18em;
@@ -101,22 +105,49 @@ textarea {
 }
 
 .report-heading {
-  color: #173d37;
-  font-size: clamp(1.8rem, 3vw, 2.6rem);
-  font-weight: 650;
-  letter-spacing: -0.035em;
+  color: #105cae;
+  font-size: clamp(1.7rem, 3vw, 2.4rem);
+  font-weight: 800;
+  letter-spacing: 0.01em;
   line-height: 1.08;
+  text-transform: uppercase;
+}
+
+/* The brand's dashed orange rule: one long bar, a dot, a short bar. */
+.brand-rule {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+
+.brand-rule span {
+  background: #ee7729;
+  border-radius: 999px;
+  height: 7px;
+}
+
+.brand-rule span:nth-child(1) {
+  width: 180px;
+}
+
+.brand-rule span:nth-child(2) {
+  width: 16px;
+}
+
+.brand-rule span:nth-child(3) {
+  width: 64px;
 }
 
 .report-orb {
   border-radius: 999px;
   filter: blur(2px);
-  opacity: 0.34;
+  opacity: 0.28;
   position: absolute;
 }
 
 .report-orb-one {
-  background: #2dd4bf;
+  background: #ee7729;
   height: 360px;
   right: -80px;
   top: -120px;
@@ -124,7 +155,7 @@ textarea {
 }
 
 .report-orb-two {
-  background: #84cc16;
+  background: #105cae;
   bottom: -210px;
   height: 420px;
   left: 18%;
@@ -138,15 +169,15 @@ textarea {
 
 .report-table th,
 .report-table td {
-  border-bottom: 1px solid #e1e8e5;
+  border-bottom: 1px solid #e4e1de;
   padding: 12px 14px;
   text-align: left;
   vertical-align: top;
 }
 
 .report-table th {
-  background: #f5f8f7;
-  color: #687671;
+  background: #eef3fa;
+  color: #105cae;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.12em;
@@ -154,7 +185,7 @@ textarea {
 }
 
 .report-table td {
-  color: #34453f;
+  color: #2f3b47;
   font-size: 12px;
 }
 

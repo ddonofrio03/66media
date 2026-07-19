@@ -1,3 +1,4 @@
+import { Montserrat } from "next/font/google";
 import Link from "next/link";
 import SiteNav from "@/components/site-nav";
 import {
@@ -15,6 +16,14 @@ import {
 import ReportView from "./report-view";
 
 export const dynamic = "force-dynamic";
+
+// Brand type per the 66 Express guidelines: Goldplay for headlines (licensed,
+// not embeddable here) with Montserrat as the approved family for subheads and
+// body — so the report document renders in Montserrat throughout.
+const montserrat = Montserrat({
+  subsets: ["latin"],
+  weight: ["400", "600", "700", "800"],
+});
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_KEY = /^\d{4}-\d{2}$/;
@@ -225,12 +234,14 @@ export default async function ReportsPage({
           {/* Keyed by period+range so switching Weekly/Monthly/Custom (or
               prev/next) remounts the document — the title and auto-drafted
               summary regenerate instead of carrying over stale edits. */}
-          <ReportView
-            key={`${report.range.period}:${report.range.key}:${q}`}
-            report={report}
-            generatedOn={generatedOn}
-            initialSummary={defaultSummary(report)}
-          />
+          <div className={montserrat.className}>
+            <ReportView
+              key={`${report.range.period}:${report.range.key}:${q}`}
+              report={report}
+              generatedOn={generatedOn}
+              initialSummary={defaultSummary(report)}
+            />
+          </div>
         </div>
       </main>
     </>

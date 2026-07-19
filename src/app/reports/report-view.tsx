@@ -174,7 +174,7 @@ export default function ReportView({
         : "Earned Media Report",
   );
   const [clientName, setClientName] = useState(
-    "66 Express Outside the Beltway",
+    "The 66 Express Outside the Beltway",
   );
   const [summary, setSummary] = useState(initialSummary);
   const [featuredIds, setFeaturedIds] = useState<Set<string>>(
@@ -257,9 +257,17 @@ export default function ReportView({
         </p>
       </section>
 
-      <article className="report-document overflow-hidden rounded-[28px] border border-[#d4ded9] bg-[#f2f6f4] shadow-xl">
-        {/* Cover */}
-        <section className="report-page report-cover relative overflow-hidden bg-[#0b4f47] p-7 text-white md:p-12">
+      <article className="report-document overflow-hidden rounded-[28px] border border-[#d0ccc9] bg-[#f1efec] shadow-xl">
+        {/* Cover — navy with the brand's orange frame accents */}
+        <section
+          className="report-page report-cover relative overflow-hidden p-7 text-white md:p-12"
+          style={{
+            background:
+              "linear-gradient(150deg, #0a1f3c 0%, #0d2c55 55%, #105cae 130%)",
+          }}
+        >
+          <div className="absolute inset-x-0 top-0 z-20 h-1.5 bg-[#ee7729]" />
+          <div className="absolute inset-x-0 bottom-0 z-20 h-1.5 bg-[#ee7729]" />
           <div className="report-orb report-orb-one" />
           <div className="report-orb report-orb-two" />
           <div className="relative z-10 flex min-h-[440px] flex-col justify-between">
@@ -279,32 +287,38 @@ export default function ReportView({
             </div>
 
             <div className="max-w-3xl">
-              <p className="text-sm font-bold uppercase tracking-[0.24em] text-emerald-200">
+              <p className="text-sm font-bold uppercase tracking-[0.24em] text-[#f8a829]">
                 {clientName}
               </p>
               <h2 className="mt-5 text-4xl font-semibold leading-tight tracking-tight md:text-6xl">
                 {title}
               </h2>
-              <p className="mt-6 text-lg text-emerald-50 md:text-2xl">
+              <p className="mt-6 text-lg text-[#dbe7f6] md:text-2xl">
                 {report.range.label}
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap gap-3 text-xs font-bold uppercase tracking-[0.16em] text-emerald-100">
-                <span className="rounded-full border border-white/25 px-4 py-2">
-                  Earned media
-                </span>
-                <span className="rounded-full border border-white/25 px-4 py-2">
-                  Washington, DC market
-                </span>
-                <span className="rounded-full border border-white/25 px-4 py-2">
-                  Web + broadcast + social
-                </span>
-              </div>
-              <p className="text-xs text-emerald-200/80">
-                Prepared by The Casey Group · Generated {generatedOn}
+            <div className="flex flex-col gap-5">
+              <p className="text-2xl font-bold tracking-tight md:text-3xl">
+                <span className="text-white">Sit Less. </span>
+                <span className="text-[#f8a829]">Live More.</span>
               </p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-3 text-xs font-bold uppercase tracking-[0.16em] text-[#c8d9ef]">
+                  <span className="rounded-full border border-white/25 px-4 py-2">
+                    Earned media
+                  </span>
+                  <span className="rounded-full border border-white/25 px-4 py-2">
+                    Washington, DC market
+                  </span>
+                  <span className="rounded-full border border-white/25 px-4 py-2">
+                    Web + broadcast + social
+                  </span>
+                </div>
+                <p className="text-xs text-[#9fb8d8]">
+                  Prepared by The Casey Group · Generated {generatedOn}
+                </p>
+              </div>
             </div>
           </div>
         </section>
@@ -314,10 +328,11 @@ export default function ReportView({
           <div className="mb-7">
             <p className="report-kicker">Executive snapshot</p>
             <h2 className="report-heading">What are the key results?</h2>
+          <div className="brand-rule"><span /><span /><span /></div>
             <textarea
               value={summary}
               onChange={(event) => setSummary(event.target.value)}
-              className="report-summary mt-4 min-h-24 w-full resize-y rounded-xl border border-[#cedbd5] bg-white p-4 text-sm leading-6 text-[#3f4d48] outline-none focus:border-[var(--accent)] md:text-base"
+              className="report-summary mt-4 min-h-24 w-full resize-y rounded-xl border border-[#c9d6e8] bg-white p-4 text-sm leading-6 text-[#2c5793] outline-none focus:border-[var(--accent)] md:text-base"
               aria-label="Executive summary"
             />
           </div>
@@ -339,12 +354,12 @@ export default function ReportView({
                     title={`${label}: ${count} mention${count === 1 ? "" : "s"}`}
                   >
                     {(!denseChart || count > 0) && (
-                      <span className="text-xs font-bold text-[#41534d]">
+                      <span className="text-xs font-bold text-[#105cae]">
                         {count > 0 ? count : ""}
                       </span>
                     )}
                     <div
-                      className="w-full max-w-12 rounded-t-md bg-[#1b9a83]"
+                      className="w-full max-w-12 rounded-t-md bg-[#105cae]"
                       style={{
                         height: `${Math.max(count > 0 ? 12 : 3, (count / maxDaily) * 120)}px`,
                         opacity: count > 0 ? 1 : 0.25,
@@ -365,12 +380,12 @@ export default function ReportView({
                 <div
                   className="grid h-36 w-36 shrink-0 place-items-center rounded-full"
                   style={{
-                    background: `conic-gradient(#1b9a83 0 ${broadcastPercent}%, #dce8e3 ${broadcastPercent}% 100%)`,
+                    background: `conic-gradient(#105cae 0 ${broadcastPercent}%, #e4e1de ${broadcastPercent}% 100%)`,
                   }}
                 >
                   <div className="grid h-24 w-24 place-items-center rounded-full bg-white text-center">
                     <div>
-                      <strong className="block text-3xl text-[#174f47]">
+                      <strong className="block text-3xl text-[#105cae]">
                         {broadcastPercent}%
                       </strong>
                       <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">
@@ -392,6 +407,7 @@ export default function ReportView({
         <section className="report-page p-5 md:p-10">
           <p className="report-kicker">Coverage mix</p>
           <h2 className="report-heading">How does earned media break down?</h2>
+          <div className="brand-rule"><span /><span /><span /></div>
 
           <div className="mt-6 grid gap-5 lg:grid-cols-2">
             <div className="space-y-5">
@@ -417,22 +433,22 @@ export default function ReportView({
 
             <ReportPanel title="Top publishers">
               {report.topOutlets.length ? (
-                <ol className="divide-y divide-[#e1e8e5]">
+                <ol className="divide-y divide-[#e8e5e2]">
                   {report.topOutlets.map(({ source, count }, index) => (
                     <li key={source} className="flex items-center gap-3 py-2.5">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#e4f1ed] text-sm font-bold text-[#126b5d]">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#e3edf9] text-sm font-bold text-[#105cae]">
                         {index + 1}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-sm font-semibold">
                         {source}
                       </span>
-                      <div className="h-2 w-24 overflow-hidden rounded-full bg-[#e2ebe7]">
+                      <div className="h-2 w-24 overflow-hidden rounded-full bg-[#e4e1de]">
                         <div
-                          className="h-full rounded-full bg-[#1b9a83]"
+                          className="h-full rounded-full bg-[#105cae]"
                           style={{ width: `${(count / maxOutlet) * 100}%` }}
                         />
                       </div>
-                      <strong className="w-6 text-right text-[#174f47]">
+                      <strong className="w-6 text-right text-[#105cae]">
                         {count}
                       </strong>
                     </li>
@@ -444,8 +460,8 @@ export default function ReportView({
             </ReportPanel>
           </div>
 
-          <div className="mt-5 rounded-2xl border border-[#d5e1dc] bg-white p-5">
-            <h3 className="text-base font-bold text-[#174f47]">
+          <div className="mt-5 rounded-2xl border border-[#d0ccc9] bg-white p-5">
+            <h3 className="text-sm font-extrabold uppercase tracking-[0.08em] text-[#105cae]">
               Measurement note
             </h3>
             <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
@@ -462,6 +478,7 @@ export default function ReportView({
         <section className="report-page p-5 md:p-10">
           <p className="report-kicker">Curated coverage</p>
           <h2 className="report-heading">Featured mentions and playable clips</h2>
+          <div className="brand-rule"><span /><span /><span /></div>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--muted)]">
             Select or remove featured items in the coverage index below.
             YouTube segments open at the moment of the on-air mention when the
@@ -473,29 +490,29 @@ export default function ReportView({
               featured.map((item) => (
                 <article
                   key={item.id}
-                  className="report-section rounded-2xl border border-[#d5e1dc] bg-white p-5 shadow-sm"
+                  className="report-section rounded-2xl border border-[#d0ccc9] bg-white p-5 shadow-sm"
                 >
                   <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-[0.13em]">
-                    <span className="rounded-full bg-[#e2f1ed] px-2.5 py-1 text-[#126b5d]">
+                    <span className="rounded-full bg-[#e3edf9] px-2.5 py-1 text-[#105cae]">
                       {typeLabel(item)}
                     </span>
                     {item.priority === "important" && (
-                      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-800">
+                      <span className="rounded-full bg-[#fbe7bf] px-2.5 py-1 text-[#7a4d07]">
                         Priority
                       </span>
                     )}
-                    <span className="rounded-full bg-[#eef2f1] px-2.5 py-1 text-[#52605c]">
+                    <span className="rounded-full bg-[#efedea] px-2.5 py-1 text-[#44546a]">
                       {LABEL_LABELS[item.label] ?? item.label}
                     </span>
                   </div>
-                  <h3 className="mt-4 text-xl font-semibold leading-snug text-[#173d37]">
+                  <h3 className="mt-4 text-xl font-semibold leading-snug text-[#123a63]">
                     {item.title}
                   </h3>
                   <p className="mt-2 text-xs font-semibold text-[var(--muted)]">
                     {item.source} · {formatItemDate(item)}
                   </p>
                   {item.snippet && (
-                    <p className="mt-3 text-sm leading-6 text-[#52605c]">
+                    <p className="mt-3 text-sm leading-6 text-[#44546a]">
                       {item.snippet}
                     </p>
                   )}
@@ -504,7 +521,7 @@ export default function ReportView({
                     href={item.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-4 inline-flex rounded-lg bg-[#174f47] px-4 py-2 text-sm font-bold text-white"
+                    className="mt-4 inline-flex rounded-lg bg-[#105cae] px-4 py-2 text-sm font-bold text-white"
                   >
                     {item.sourceType === "broadcast"
                       ? "Open clip / source"
@@ -528,6 +545,7 @@ export default function ReportView({
             <div>
               <p className="report-kicker">Coverage index</p>
               <h2 className="report-heading">All captured mentions</h2>
+          <div className="brand-rule"><span /><span /><span /></div>
             </div>
             <p className="no-print max-w-md text-xs leading-5 text-[var(--muted)]">
               Check the stories that should appear in Featured mentions. Your
@@ -536,7 +554,7 @@ export default function ReportView({
           </div>
 
           {report.items.length ? (
-            <div className="mt-6 overflow-x-auto rounded-2xl border border-[#d5e1dc] bg-white">
+            <div className="mt-6 overflow-x-auto rounded-2xl border border-[#d0ccc9] bg-white">
               <table className="report-table w-full border-collapse">
                 <thead>
                   <tr>
@@ -602,8 +620,8 @@ export default function ReportView({
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="report-section rounded-2xl border border-[#d5e1dc] bg-white p-5 shadow-sm">
-      <strong className="block text-4xl font-semibold tracking-tight text-[#174f47]">
+    <div className="report-section rounded-2xl border border-[#d0ccc9] bg-white p-5 shadow-sm">
+      <strong className="block text-4xl font-semibold tracking-tight text-[#105cae]">
         {value.toLocaleString("en-US")}
       </strong>
       <span className="mt-2 block text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
@@ -635,9 +653,9 @@ function MixBars({
                 {count} · {percent}%
               </span>
             </div>
-            <div className="h-2.5 overflow-hidden rounded-full bg-[#e2ebe7]">
+            <div className="h-2.5 overflow-hidden rounded-full bg-[#e4e1de]">
               <div
-                className="h-full rounded-full bg-[#1b9a83]"
+                className="h-full rounded-full bg-[#105cae]"
                 style={{ width: `${percent}%` }}
               />
             </div>
@@ -656,8 +674,8 @@ function ReportPanel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="report-section rounded-2xl border border-[#d5e1dc] bg-white p-5 shadow-sm">
-      <h3 className="text-base font-bold text-[#174f47]">{title}</h3>
+    <section className="report-section rounded-2xl border border-[#d0ccc9] bg-white p-5 shadow-sm">
+      <h3 className="text-sm font-extrabold uppercase tracking-[0.08em] text-[#105cae]">{title}</h3>
       {children}
     </section>
   );
@@ -665,7 +683,7 @@ function ReportPanel({
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-dashed border-[#becdc7] bg-[#f8faf9] p-8 text-center text-sm text-[var(--muted)]">
+    <div className="rounded-xl border border-dashed border-[#d0ccc9] bg-[#faf9f7] p-8 text-center text-sm text-[var(--muted)]">
       {children}
     </div>
   );

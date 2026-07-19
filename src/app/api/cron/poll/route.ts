@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { refineClassifications } from "@/lib/ai-classify";
 import { sendAlerts, shouldAlert } from "@/lib/alerts";
 import { collectDigestItems } from "@/lib/collectors";
+import { isXOfficialEnabled } from "@/lib/x-official";
 import { getExistingIds, upsertCollectedItems } from "@/lib/digest-store";
 import { getMonitoringSettings } from "@/lib/monitoring-settings";
 import { getSources } from "@/lib/sources";
@@ -63,6 +64,23 @@ export async function GET(request: Request) {
     });
   }
 
+  // Which optional social sources are configured — surfaced so a verification
+  // run can positively confirm "enabled and returning N raw posts" vs.
+  // "credential missing" (both otherwise look like silent zeroes).
+  const socialConfig = {
+    xOfficial: isXOfficialEnabled(),
+    bluesky: Boolean(
+      process.env.BLUESKY_IDENTIFIER && process.env.BLUESKY_APP_PASSWORD,
+    ),
+    apifyActors:
+      process.env.SOCIAL_ENABLED === "true" && Boolean(process.env.APIFY_TOKEN),
+    fbWatchlist: process.env.FB_WATCHLIST === "true",
+    anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+    pushover: Boolean(
+      process.env.PUSHOVER_APP_TOKEN && process.env.PUSHOVER_USER_KEY,
+    ),
+  };
+
   const newItems = collection.items.filter((item) => !existingIds.has(item.id));
   if (newItems.length === 0) {
     console.log(
@@ -74,6 +92,8 @@ export async function GET(request: Request) {
       newItems: 0,
       alerts: 0,
       degradedProviders: collection.degradedProviders,
+      providerCounts: collection.providerCounts,
+      socialConfig,
     });
   }
 
@@ -97,5 +117,7 @@ export async function GET(request: Request) {
     alerts: result.sent,
     alertChannel: result.channel,
     degradedProviders: collection.degradedProviders,
+    providerCounts: collection.providerCounts,
+    socialConfig,
   });
 }

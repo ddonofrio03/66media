@@ -31,6 +31,9 @@ type CollectionResult = {
   offTopicCount: number;
   suppressedCount: number;
   degradedProviders: string[];
+  // Raw item count per provider BEFORE dedup/window/relevance filtering —
+  // observability for "is this source actually returning anything".
+  providerCounts: Record<string, number>;
 };
 
 // Built-in corridor net for incidents (crashes/closures), run in addition to
@@ -108,9 +111,11 @@ export async function collectDigestItems(
   const settled = await Promise.allSettled(providers.map((p) => p.run()));
   const rawItems: RawItem[] = [];
   const degradedProviders: string[] = [];
+  const providerCounts: Record<string, number> = {};
 
   settled.forEach((result, index) => {
     if (result.status === "fulfilled") {
+      providerCounts[providers[index].name] = result.value.length;
       rawItems.push(...result.value);
     } else {
       degradedProviders.push(providers[index].name);
@@ -150,6 +155,7 @@ export async function collectDigestItems(
     offTopicCount: Math.max(timelyItems.length - items.length, 0),
     suppressedCount: Math.max(uniqueItems.length - items.length, 0),
     degradedProviders,
+    providerCounts,
   };
 }
 

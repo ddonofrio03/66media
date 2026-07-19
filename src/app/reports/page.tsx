@@ -222,7 +222,11 @@ export default async function ReportsPage({
             )}
           </section>
 
+          {/* Keyed by period+range so switching Weekly/Monthly/Custom (or
+              prev/next) remounts the document — the title and auto-drafted
+              summary regenerate instead of carrying over stale edits. */}
           <ReportView
+            key={`${report.range.period}:${report.range.key}:${q}`}
             report={report}
             generatedOn={generatedOn}
             initialSummary={defaultSummary(report)}

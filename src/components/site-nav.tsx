@@ -7,7 +7,8 @@ type Section =
   | "sources"
   | "settings"
   | "preview"
-  | "testc";
+  | "testc"
+  | "reports";
 
 const LINKS: Array<{ key: Section; href: string; label: string }> = [
   { key: "dashboard", href: "/", label: "Dashboard" },
@@ -16,11 +17,12 @@ const LINKS: Array<{ key: Section; href: string; label: string }> = [
   { key: "settings", href: "/settings", label: "Keywords" },
   { key: "preview", href: "/preview", label: "Digest Preview" },
   { key: "testc", href: "/testc", label: "Reports" },
+  { key: "reports", href: "/testO", label: "Report Lab" },
 ];
 
 export default function SiteNav({ active }: { active?: Section }) {
   return (
-    <header className="bg-[var(--panel)]">
+    <header className="site-nav bg-[var(--panel)]">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 border-b border-[var(--line)] px-5 py-3 md:px-8">
         <Link href="/" aria-label="66 Express Outside the Beltway — home">
           <Image

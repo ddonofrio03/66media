@@ -1,15 +1,27 @@
 import Link from "next/link";
 import { loadDashboardSnapshot } from "@/lib/digest";
 import { monitoringConfig } from "@/lib/monitoring-config";
+import { getReport, lastNDaysRange, type ReportItem } from "@/lib/report";
 import { getSources, summarizeSources } from "@/lib/sources";
 import SiteNav from "@/components/site-nav";
 
 export const dynamic = "force-dynamic";
 
+const STORY_LABELS: Record<string, string> = {
+  confirmed_otb: "Confirmed 66 OTB",
+  likely_otb: "Likely corridor",
+  related: "Operator / industry",
+  uncertain_i66_segment: "Uncertain segment",
+};
+
 export default async function DashboardPage() {
   const sources = await getSources();
   const summary = summarizeSources(sources);
   const digest = await loadDashboardSnapshot();
+  // Top stories over the rolling last 7 days, straight from the archive —
+  // report.items is already ranked important -> confirmed -> likely.
+  const weekReport = await getReport(lastNDaysRange(7));
+  const topStories = weekReport.items.slice(0, 5);
   const highPriority = sources.filter((source) => source.priority === "high");
 
   return (
@@ -32,6 +44,46 @@ export default async function DashboardPage() {
             </p>
           </div>
         </header>
+
+        {weekReport.available && (
+          <section className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold">
+                  Top Stories — Last 7 Days
+                </h2>
+                <p className="mt-1 text-sm text-[var(--muted)]">
+                  {weekReport.totalMentions} relevant{" "}
+                  {pluralize("mention", weekReport.totalMentions)} across{" "}
+                  {weekReport.uniqueOutlets}{" "}
+                  {pluralize("outlet", weekReport.uniqueOutlets)}
+                  {weekReport.importantCount > 0
+                    ? ` · ${weekReport.importantCount} flagged important`
+                    : ""}
+                </p>
+              </div>
+              <Link
+                href="/reports"
+                className="rounded-md bg-[var(--accent)] px-3 py-2 text-sm font-semibold text-white hover:bg-[var(--accent-strong)]"
+              >
+                Full report →
+              </Link>
+            </div>
+
+            {topStories.length > 0 ? (
+              <div className="mt-3 divide-y divide-[var(--line)]">
+                {topStories.map((story) => (
+                  <TopStory key={story.id} story={story} />
+                ))}
+              </div>
+            ) : (
+              <p className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[#fbfcfc] p-4 text-sm text-[var(--muted)]">
+                No relevant coverage captured in the last 7 days. Monitoring is
+                active — quiet stretches are normal.
+              </p>
+            )}
+          </section>
+        )}
 
         <section className="metric-grid">
           <Metric label="Sources" value={summary.total} detail={`${summary.included} in V1`} />
@@ -136,6 +188,42 @@ function Metric({
 
 function pluralize(word: string, count: number) {
   return count === 1 ? word : `${word}s`;
+}
+
+function TopStory({ story }: { story: ReportItem }) {
+  const published = story.publishedAt
+    ? new Date(story.publishedAt).toLocaleDateString("en-US", {
+        timeZone: "America/New_York",
+        month: "short",
+        day: "numeric",
+      })
+    : "";
+  return (
+    <div className="py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {story.priority === "important" && (
+          <span className="rounded-full bg-[#f8e8e8] px-2 py-0.5 text-xs font-semibold text-[var(--critical)]">
+            Important
+          </span>
+        )}
+        <span className="rounded-full bg-[#e6f3f1] px-2 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">
+          {STORY_LABELS[story.label] ?? story.label}
+        </span>
+        <span className="text-xs font-semibold text-[var(--muted)]">
+          {story.source}
+          {published ? ` · ${published}` : ""}
+        </span>
+      </div>
+      <a
+        href={story.url}
+        target="_blank"
+        rel="noreferrer"
+        className="text-wrap mt-1 block font-semibold leading-snug hover:text-[var(--accent-strong)] hover:underline"
+      >
+        {story.title}
+      </a>
+    </div>
+  );
 }
 
 function Row({ label, value }: { label: string; value: string }) {

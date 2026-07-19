@@ -135,6 +135,13 @@ export function weeklyRange(weekKey: string): ReportRange {
   };
 }
 
+/** Rolling range covering the last `n` Eastern days, ending today. */
+export function lastNDaysRange(n: number, now = new Date()): ReportRange {
+  const today = easternDateKey(now);
+  const range = customRange(addDays(today, -(n - 1)), today);
+  return { ...range, label: `Last ${n} days` };
+}
+
 /* ------------------------------ Custom ------------------------------- */
 
 const MAX_CUSTOM_DAYS = 92;

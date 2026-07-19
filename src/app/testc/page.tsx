@@ -3,10 +3,14 @@ import Link from "next/link";
 import SiteNav from "@/components/site-nav";
 import {
   currentMonthKey,
-  getMonthlyReport,
-  monthLabel,
+  currentWeekKey,
+  getReport,
+  monthlyRange,
   shiftMonthKey,
+  shiftWeekKey,
+  weeklyRange,
   type ReportItem,
+  type ReportRange,
 } from "@/lib/report";
 import PrintButton from "./print-button";
 
@@ -25,23 +29,43 @@ const LABEL_LABELS: Record<string, string> = {
   uncertain_i66_segment: "Uncertain segment",
 };
 
-export default async function MonthlyReportPage({
+export default async function ReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string }>;
+  searchParams: Promise<{ period?: string; month?: string; week?: string }>;
 }) {
   const params = await searchParams;
-  const requested = params.month ?? "";
-  const monthKey = /^\d{4}-\d{2}$/.test(requested)
-    ? requested
-    : currentMonthKey();
-  const report = await getMonthlyReport(monthKey);
+  const period = params.period === "weekly" ? "weekly" : "monthly";
+
+  let range: ReportRange;
+  if (period === "weekly") {
+    const weekKey = /^\d{4}-\d{2}-\d{2}$/.test(params.week ?? "")
+      ? (params.week as string)
+      : currentWeekKey();
+    range = weeklyRange(weekKey);
+  } else {
+    const monthKey = /^\d{4}-\d{2}$/.test(params.month ?? "")
+      ? (params.month as string)
+      : currentMonthKey();
+    range = monthlyRange(monthKey);
+  }
+
+  const report = await getReport(range);
   const maxDaily = Math.max(1, ...report.daily.map((d) => d.count));
   const maxOutlet = Math.max(1, ...report.topOutlets.map((o) => o.count));
   const generatedOn = new Date().toLocaleDateString("en-US", {
     timeZone: "America/New_York",
     dateStyle: "long",
   });
+
+  const prevHref =
+    period === "weekly"
+      ? `/testc?period=weekly&week=${shiftWeekKey(range.key, -1)}`
+      : `/testc?month=${shiftMonthKey(range.key, -1)}`;
+  const nextHref =
+    period === "weekly"
+      ? `/testc?period=weekly&week=${shiftWeekKey(range.key, 1)}`
+      : `/testc?month=${shiftMonthKey(range.key, 1)}`;
 
   return (
     <>
@@ -54,10 +78,11 @@ export default async function MonthlyReportPage({
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-semibold uppercase text-[var(--accent)]">
-                  Earned Media Report
+                  {period === "weekly" ? "Weekly" : "Monthly"} Earned Media
+                  Report
                 </p>
                 <h1 className="mt-1 text-3xl font-semibold md:text-4xl">
-                  {report.monthLabel}
+                  {report.range.label}
                 </h1>
                 <p className="mt-2 text-sm text-[var(--muted)]">
                   I-66 Express Lanes Outside the Beltway · 66 Express Mobility
@@ -74,11 +99,23 @@ export default async function MonthlyReportPage({
               />
             </div>
             <div className="flex flex-wrap items-center gap-2 print:hidden">
-              <MonthLink monthKey={shiftMonthKey(monthKey, -1)} label="← Prev" />
+              <div className="mr-2 flex overflow-hidden rounded-md border border-[var(--line)]">
+                <PeriodTab
+                  href="/testc?period=weekly"
+                  label="Weekly"
+                  active={period === "weekly"}
+                />
+                <PeriodTab
+                  href="/testc"
+                  label="Monthly"
+                  active={period === "monthly"}
+                />
+              </div>
+              <NavLink href={prevHref} label="← Prev" />
               <span className="rounded-md border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-sm font-semibold">
-                {report.monthLabel}
+                {report.range.label}
               </span>
-              <MonthLink monthKey={shiftMonthKey(monthKey, 1)} label="Next →" />
+              <NavLink href={nextHref} label="Next →" />
               <div className="ml-auto">
                 <PrintButton />
               </div>
@@ -88,8 +125,8 @@ export default async function MonthlyReportPage({
           {!report.available ? (
             <section className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5 text-sm text-[var(--muted)]">
               Reports need the Supabase archive. Set SUPABASE_URL and
-              SUPABASE_SERVICE_ROLE_KEY, then let the daily collector run — this
-              page fills in automatically.
+              SUPABASE_SERVICE_ROLE_KEY, then let the collector run — this page
+              fills in automatically.
             </section>
           ) : (
             <>
@@ -124,26 +161,31 @@ export default async function MonthlyReportPage({
                   channels.
                 </p>
                 <div className="mt-5 flex h-36 items-end gap-[3px]">
-                  {report.daily.map(({ day, count }) => (
+                  {report.daily.map(({ label, count }, index) => (
                     <div
-                      key={day}
-                      className="group relative flex-1"
-                      title={`${report.monthLabel.split(" ")[0]} ${day}: ${count} mention${count === 1 ? "" : "s"}`}
+                      key={`${label}-${index}`}
+                      className="flex flex-1 flex-col items-center gap-1"
+                      title={`${label}: ${count} mention${count === 1 ? "" : "s"}`}
                     >
-                      <div
-                        className="w-full rounded-t-sm bg-[var(--accent)]"
-                        style={{
-                          height: `${Math.max(count > 0 ? 6 : 2, (count / maxDaily) * 130)}px`,
-                          opacity: count > 0 ? 1 : 0.15,
-                        }}
-                      />
+                      <div className="flex w-full flex-1 items-end">
+                        <div
+                          className="w-full rounded-t-sm bg-[var(--accent)]"
+                          style={{
+                            height: `${Math.max(count > 0 ? 6 : 2, (count / maxDaily) * 115)}px`,
+                            opacity: count > 0 ? 1 : 0.15,
+                          }}
+                        />
+                      </div>
+                      {(report.daily.length <= 7 ||
+                        index === 0 ||
+                        index === report.daily.length - 1 ||
+                        (index + 1) % 5 === 0) && (
+                        <span className="text-[10px] text-[var(--muted)]">
+                          {label}
+                        </span>
+                      )}
                     </div>
                   ))}
-                </div>
-                <div className="mt-1 flex justify-between text-xs text-[var(--muted)]">
-                  <span>1</span>
-                  <span>{Math.round(report.daily.length / 2)}</span>
-                  <span>{report.daily.length}</span>
                 </div>
               </section>
 
@@ -169,7 +211,7 @@ export default async function MonthlyReportPage({
                     ))}
                     {report.topOutlets.length === 0 && (
                       <p className="text-sm text-[var(--muted)]">
-                        No coverage recorded this month.
+                        No coverage recorded this {period === "weekly" ? "week" : "month"}.
                       </p>
                     )}
                   </div>
@@ -224,8 +266,9 @@ export default async function MonthlyReportPage({
               <section className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
                 <h2 className="text-xl font-semibold">Top Stories</h2>
                 <p className="mt-1 text-sm text-[var(--muted)]">
-                  Highest-signal coverage this month (important and confirmed
-                  items first).
+                  Highest-signal coverage this{" "}
+                  {period === "weekly" ? "week" : "month"} (important and
+                  confirmed items first).
                 </p>
                 <div className="mt-4 divide-y divide-[var(--line)]">
                   {report.topStories.map((story) => (
@@ -233,7 +276,7 @@ export default async function MonthlyReportPage({
                   ))}
                   {report.topStories.length === 0 && (
                     <p className="py-3 text-sm text-[var(--muted)]">
-                      No stories recorded this month.
+                      No stories recorded in this period.
                     </p>
                   )}
                 </div>
@@ -261,12 +304,35 @@ function countFor(
   return report.byType.find((t) => t.type === type)?.count ?? 0;
 }
 
-function MonthLink({ monthKey, label }: { monthKey: string; label: string }) {
+function PeriodTab({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
   return (
     <Link
-      href={`/testc?month=${monthKey}`}
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={`px-3 py-1.5 text-sm font-semibold ${
+        active
+          ? "bg-[var(--accent)] text-white"
+          : "bg-[var(--panel)] hover:bg-[#fbfcfc]"
+      }`}
+    >
+      {label}
+    </Link>
+  );
+}
+
+function NavLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
       className="rounded-md border border-[var(--line)] px-3 py-1.5 text-sm font-semibold hover:bg-[#fbfcfc]"
-      title={monthLabel(monthKey)}
     >
       {label}
     </Link>

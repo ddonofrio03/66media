@@ -192,7 +192,12 @@ export function renderDigestHtml(snapshot: DigestSnapshot) {
   <body style="margin:0;background:#f7f8f8;color:#17211f;font-family:Arial,sans-serif;">
     <main style="max-width:720px;margin:0 auto;padding:28px 20px;">
       <h1 style="font-size:24px;line-height:1.2;margin:0 0 8px;">66EMP Daily Media Digest</h1>
-      <p style="color:#66706d;margin:0 0 24px;">Monitoring window: ${escapeHtml(snapshot.windowLabel)}</p>
+      <p style="color:#66706d;margin:0 0 12px;">Monitoring window: ${escapeHtml(snapshot.windowLabel)}</p>
+      <p style="margin:0 0 24px;font-size:13px;">
+        <a href="${appBaseUrl()}/reports" target="_blank" rel="noopener noreferrer" style="color:#0f766e;font-weight:bold;text-decoration:none;">📊 Interactive weekly report</a>
+        &nbsp;·&nbsp;
+        <a href="${appBaseUrl()}/archive" target="_blank" rel="noopener noreferrer" style="color:#0f766e;font-weight:bold;text-decoration:none;">Coverage archive</a>
+      </p>
       ${snapshot.noRelevantCoverage ? "" : renderSummary(snapshot)}
       ${
         snapshot.noRelevantCoverage
@@ -245,6 +250,7 @@ export function renderDigestText(snapshot: DigestSnapshot) {
     "66EMP Daily Media Digest",
     "",
     `Monitoring window: ${snapshot.windowLabel}`,
+    `Interactive report: ${appBaseUrl()}/reports · Archive: ${appBaseUrl()}/archive`,
     "",
     "At a glance",
     ...glanceLines,
@@ -264,12 +270,25 @@ function renderSection(title: string, items: DigestItem[]) {
   </section>`;
 }
 
+const TRANSCRIPT_PREFIX = "On-air transcript match";
+
 function renderItem(item: DigestItem) {
   const snippet = cleanSnippet(item);
+  const isTranscript = snippet.startsWith(TRANSCRIPT_PREFIX);
+
+  // Aired-segment hits get their spoken quote styled as a pull-quote and a
+  // "watch at the mention" link (the URL is deep-linked to the timestamp).
+  const snippetHtml = !snippet
+    ? ""
+    : isTranscript
+      ? `<blockquote style="margin:6px 0 0;padding:8px 12px;border-left:3px solid #0f766e;background:#f2f7f6;font-style:italic;line-height:1.45;">${escapeHtml(snippet.replace(/^On-air transcript match \([^)]*\):\s*/, ""))}</blockquote>
+         <p style="margin:6px 0 0;font-size:13px;"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" style="color:#0f766e;font-weight:bold;text-decoration:none;">▶ Watch the segment at the mention</a></p>`
+      : `<p style="margin:0;line-height:1.45;">${escapeHtml(snippet)}</p>`;
+
   return `<article style="border-top:1px solid #dce3e0;padding-top:12px;margin-top:12px;">
     <h3 style="font-size:16px;margin:0 0 6px;"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" style="color:#0f766e;text-decoration:none;">${escapeHtml(item.title)}</a></h3>
-    <p style="color:#66706d;font-size:13px;margin:0 0 6px;">${escapeHtml(item.source)} · ${escapeHtml(formatItemDate(item.publishedAt))} · ${escapeHtml(item.reason)}</p>
-    ${snippet ? `<p style="margin:0;line-height:1.45;">${escapeHtml(snippet)}</p>` : ""}
+    <p style="color:#66706d;font-size:13px;margin:0 0 6px;">${escapeHtml(item.source)} · ${escapeHtml(formatItemDate(item.publishedAt))}${isTranscript ? " · Spoken on air" : ""} · ${escapeHtml(item.reason)}</p>
+    ${snippetHtml}
   </article>`;
 }
 
@@ -312,6 +331,13 @@ function renderTextSection(title: string, items: DigestItem[]) {
       ];
     }),
   ];
+}
+
+function appBaseUrl() {
+  return (process.env.APP_BASE_URL || "https://66media.vercel.app").replace(
+    /\/$/,
+    "",
+  );
 }
 
 function formatItemDate(value: string) {

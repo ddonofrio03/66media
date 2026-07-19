@@ -10,11 +10,11 @@ import { getSupabase } from "@/lib/db";
  * weekly Executive Summary deck for the client.
  */
 
-export type ReportPeriod = "weekly" | "monthly";
+export type ReportPeriod = "weekly" | "monthly" | "custom";
 
 export type ReportRange = {
   period: ReportPeriod;
-  key: string; // monthly: "2026-07" · weekly: the Saturday start "2026-07-11"
+  key: string; // monthly: "2026-07" · weekly/custom: the start date "2026-07-11"
   label: string;
   startUtc: Date;
   endUtc: Date;
@@ -38,11 +38,15 @@ export type Report = {
   range: ReportRange;
   available: boolean; // false when Supabase isn't configured
   totalMentions: number;
+  uniqueOutlets: number;
   byType: Array<{ type: string; count: number }>;
   byLabel: Array<{ label: string; count: number }>;
   topOutlets: Array<{ source: string; count: number }>;
   daily: Array<{ label: string; count: number }>;
-  topStories: ReportItem[];
+  // Ranked best-first: important, then confirmed, likely, the rest. The full
+  // in-range list (capped at 500) — the coverage index / CSV export use all of
+  // it; "featured" defaults come from the top of this ranking.
+  items: ReportItem[];
   importantCount: number;
 };
 
@@ -131,18 +135,51 @@ export function weeklyRange(weekKey: string): ReportRange {
   };
 }
 
+/* ------------------------------ Custom ------------------------------- */
+
+const MAX_CUSTOM_DAYS = 92;
+
+/** Arbitrary from/to (inclusive) range, capped at MAX_CUSTOM_DAYS. */
+export function customRange(fromKey: string, toKey: string): ReportRange {
+  let start = fromKey;
+  let end = toKey;
+  if (start > end) {
+    [start, end] = [end, start];
+  }
+  const dayCount = Math.min(
+    MAX_CUSTOM_DAYS,
+    Math.round(
+      (utcMidnightEastern(end).getTime() - utcMidnightEastern(start).getTime()) /
+        86_400_000,
+    ) + 1,
+  );
+  end = addDays(start, dayCount - 1);
+  return {
+    period: "custom",
+    key: start,
+    label: `${shortDate(start)} – ${shortDate(end)}, ${utcMidnightEastern(end).getUTCFullYear()}`,
+    startUtc: utcMidnightEastern(start),
+    endUtc: utcMidnightEastern(addDays(start, dayCount)),
+    dayKeys: Array.from({ length: dayCount }, (_, i) => addDays(start, i)),
+  };
+}
+
 /* ------------------------------ Report ------------------------------- */
 
-export async function getReport(range: ReportRange): Promise<Report> {
+export async function getReport(
+  range: ReportRange,
+  q = "",
+): Promise<Report> {
   const base: Report = {
     range,
     available: false,
     totalMentions: 0,
+    uniqueOutlets: 0,
     byType: [],
     byLabel: [],
     topOutlets: [],
     daily: [],
-    topStories: [],
+    items: [],
     importantCount: 0,
   };
 
@@ -151,7 +188,7 @@ export async function getReport(range: ReportRange): Promise<Report> {
     return base;
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("digest_items")
     .select(
       "id, title, url, source, source_type, label, priority, snippet, published_at",
@@ -160,6 +197,15 @@ export async function getReport(range: ReportRange): Promise<Report> {
     .lt("published_at", range.endUtc.toISOString())
     .order("published_at", { ascending: false })
     .limit(2000);
+
+  const term = q.replace(/[%,()*\\]/g, " ").trim().slice(0, 80);
+  if (term) {
+    query = query.or(
+      `title.ilike.%${term}%,source.ilike.%${term}%,snippet.ilike.%${term}%`,
+    );
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error("[report] getReport failed:", error.message);
@@ -208,6 +254,7 @@ export async function getReport(range: ReportRange): Promise<Report> {
     ...base,
     available: true,
     totalMentions: items.length,
+    uniqueOutlets: outletCounts.size,
     byType: [...typeCounts.entries()]
       .map(([type, count]) => ({ type, count }))
       .sort((a, b) => b.count - a.count),
@@ -225,12 +272,12 @@ export async function getReport(range: ReportRange): Promise<Report> {
               weekday: "short",
               timeZone: "UTC",
             })
-          : String(Number(key.slice(8))),
+          : shortDate(key),
       count: dayCounts.get(key) ?? 0,
     })),
-    topStories: [...items]
+    items: [...items]
       .sort((a, b) => storyRank(a) - storyRank(b))
-      .slice(0, 15),
+      .slice(0, 500),
     importantCount: items.filter((item) => item.priority === "important")
       .length,
   };

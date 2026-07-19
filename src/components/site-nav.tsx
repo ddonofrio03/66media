@@ -7,7 +7,6 @@ type Section =
   | "sources"
   | "settings"
   | "preview"
-  | "testc"
   | "reports";
 
 const LINKS: Array<{ key: Section; href: string; label: string }> = [
@@ -16,8 +15,7 @@ const LINKS: Array<{ key: Section; href: string; label: string }> = [
   { key: "sources", href: "/sources", label: "Sources" },
   { key: "settings", href: "/settings", label: "Keywords" },
   { key: "preview", href: "/preview", label: "Digest Preview" },
-  { key: "testc", href: "/testc", label: "Reports" },
-  { key: "reports", href: "/testO", label: "Report Lab" },
+  { key: "reports", href: "/reports", label: "Reports" },
 ];
 
 export default function SiteNav({ active }: { active?: Section }) {

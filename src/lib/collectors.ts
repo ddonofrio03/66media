@@ -5,6 +5,8 @@ import {
   type MonitoringSettings,
 } from "@/lib/monitoring-settings";
 import { collectSocialItems } from "@/lib/social";
+import { collectBlueskyItems } from "@/lib/bluesky";
+import { collectXOfficialItems, isXOfficialEnabled } from "@/lib/x-official";
 import { enrichYouTubeTranscripts } from "@/lib/youtube-captions";
 import { refineClassifications } from "@/lib/ai-classify";
 import { getDigestLookbackHours } from "@/lib/time";
@@ -82,7 +84,18 @@ export async function collectDigestItems(
     { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
     { name: "Bing News", run: () => collectBingNewsItems(exactQueries) },
     { name: "Reddit", run: () => collectRedditItems(exactQueries) },
+    // Free/cheap social sources run on EVERY collection (poller included):
+    // Bluesky is free (gated on its login env vars, silent [] otherwise) and
+    // the official X API bills per unique post with 24h dedup, so frequent
+    // polling costs cents (gated on X_BEARER_TOKEN, silent [] otherwise).
+    { name: "Bluesky", run: () => collectBlueskyItems() },
   ];
+  if (isXOfficialEnabled()) {
+    providers.push({
+      name: "X (Official)",
+      run: () => collectXOfficialItems(now),
+    });
+  }
   if (includeSocial) {
     // Apify X + Facebook keyword search. Self-gated behind SOCIAL_ENABLED —
     // a silent [] when disabled, so it never flags as degraded until live.

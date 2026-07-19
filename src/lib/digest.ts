@@ -111,6 +111,8 @@ export async function loadDashboardSnapshot(): Promise<DigestSnapshot> {
   return stored ?? buildDigestSnapshot();
 }
 
+const SOCIAL_SECTION_TITLE = "Social Media Pulse";
+
 function digestSections(snapshot: DigestSnapshot) {
   return [
     ["Important / Needs Review", snapshot.important],
@@ -118,9 +120,24 @@ function digestSections(snapshot: DigestSnapshot) {
     ["Likely 66 Outside the Beltway", snapshot.likely],
     ["Related Stories (operator / industry)", snapshot.related ?? []],
     ["TV, Radio & Broadcast", snapshot.broadcast ?? []],
-    ["Reddit and Public Social", snapshot.social],
+    [SOCIAL_SECTION_TITLE, snapshot.social],
     ["Uncertain / Possible Matches", snapshot.uncertain],
   ] as const;
+}
+
+/** Platform bucket for a social item, derived from its URL host. */
+export function socialPlatform(url: string): string {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    if (host.endsWith("x.com") || host.endsWith("twitter.com")) return "X";
+    if (host.endsWith("bsky.app")) return "Bluesky";
+    if (host.endsWith("facebook.com")) return "Facebook";
+    if (host.endsWith("reddit.com")) return "Reddit";
+    if (host.endsWith("linkedin.com")) return "LinkedIn";
+    return "Other";
+  } catch {
+    return "Other";
+  }
 }
 
 /**
@@ -264,10 +281,32 @@ export function renderDigestText(snapshot: DigestSnapshot) {
 }
 
 function renderSection(title: string, items: DigestItem[]) {
+  // The social section groups items under platform subheadings (X, Bluesky,
+  // Facebook, Reddit, LinkedIn) instead of one undifferentiated list.
+  const body =
+    title === SOCIAL_SECTION_TITLE
+      ? groupByPlatform(items)
+          .map(
+            ([platform, platformItems]) =>
+              `<h3 style="font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:0.08em;color:#66706d;margin:16px 0 0;">${escapeHtml(platform)} (${platformItems.length})</h3>
+               ${platformItems.map(renderItem).join("")}`,
+          )
+          .join("")
+      : items.map(renderItem).join("");
+
   return `<section style="background:#fff;border:1px solid #dce3e0;border-radius:8px;padding:20px;margin-bottom:16px;">
     <h2 style="font-size:18px;margin:0 0 12px;">${escapeHtml(title)}</h2>
-    ${items.map(renderItem).join("")}
+    ${body}
   </section>`;
+}
+
+function groupByPlatform(items: DigestItem[]) {
+  const groups = new Map<string, DigestItem[]>();
+  for (const item of items) {
+    const platform = socialPlatform(item.url);
+    groups.set(platform, [...(groups.get(platform) ?? []), item]);
+  }
+  return [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
 }
 
 const TRANSCRIPT_PREFIX = "On-air transcript match";
@@ -317,13 +356,14 @@ function cleanSnippet(item: DigestItem): string {
 }
 
 function renderTextSection(title: string, items: DigestItem[]) {
+  const isSocial = title === SOCIAL_SECTION_TITLE;
   return [
     title,
     "-".repeat(title.length),
     ...items.flatMap((item) => {
       const snippet = cleanSnippet(item);
       return [
-        `${item.title}`,
+        `${isSocial ? `[${socialPlatform(item.url)}] ` : ""}${item.title}`,
         `${item.source} | ${formatItemDate(item.publishedAt)} | ${item.reason}`,
         `${item.url}`,
         ...(snippet ? [snippet] : []),

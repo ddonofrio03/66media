@@ -45,6 +45,22 @@ function formatItemDate(item: ReportItem) {
     : itemDateFormat.format(parsed);
 }
 
+// Local copy of the platform bucketing (importing it from lib/digest would
+// pull the whole server digest pipeline into the client bundle).
+function platformOf(url: string): string {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    if (host.endsWith("x.com") || host.endsWith("twitter.com")) return "X";
+    if (host.endsWith("bsky.app")) return "Bluesky";
+    if (host.endsWith("facebook.com")) return "Facebook";
+    if (host.endsWith("reddit.com")) return "Reddit";
+    if (host.endsWith("linkedin.com")) return "LinkedIn";
+    return "Other";
+  } catch {
+    return "Other";
+  }
+}
+
 function typeLabel(item: ReportItem) {
   return TYPE_LABELS[item.sourceType] ?? item.sourceType;
 }
@@ -471,6 +487,60 @@ export default function ReportView({
               radio (including aired-segment transcripts), regional and corridor
               outlets, news search, and public social channels.
             </p>
+          </div>
+        </section>
+
+        {/* Social pulse */}
+        <section className="report-page p-5 md:p-10">
+          <p className="report-kicker">Social media</p>
+          <h2 className="report-heading">Social pulse</h2>
+          <div className="brand-rule"><span /><span /><span /></div>
+
+          <div className="mt-6 grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
+            <ReportPanel title="Posts by platform">
+              <MixBars
+                rows={report.byPlatform.map(({ platform, count }) => ({
+                  label: platform,
+                  count,
+                }))}
+                total={report.byPlatform.reduce((sum, p) => sum + p.count, 0)}
+              />
+            </ReportPanel>
+
+            <ReportPanel title="Recent posts">
+              {report.socialPosts.length ? (
+                <div className="divide-y divide-[#e8e5e2]">
+                  {report.socialPosts.map((post) => (
+                    <div key={post.id} className="py-3">
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-[0.13em]">
+                        <span className="rounded-full bg-[#e3edf9] px-2.5 py-1 text-[#105cae]">
+                          {platformOf(post.url)}
+                        </span>
+                        <span className="text-[var(--muted)] normal-case tracking-normal">
+                          {post.source} · {formatItemDate(post)}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-sm leading-6 text-[#44546a]">
+                        {post.snippet || post.title}
+                      </p>
+                      <a
+                        href={post.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-block text-xs font-bold text-[#105cae] underline decoration-1 underline-offset-2"
+                      >
+                        View post
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState>
+                  No public social mentions captured in this period across X,
+                  Bluesky, Facebook, Reddit, or LinkedIn.
+                </EmptyState>
+              )}
+            </ReportPanel>
           </div>
         </section>
 

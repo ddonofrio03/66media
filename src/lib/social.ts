@@ -1,5 +1,6 @@
 import type { MonitoringSettings } from "@/lib/monitoring-settings";
 import type { RawItem } from "@/lib/collectors";
+import { isXOfficialEnabled } from "@/lib/x-official";
 
 // Apify pay-per-result social collector. X (Twitter) keyword search is the
 // backbone; Facebook open keyword search is best-effort (FB has no usable
@@ -18,7 +19,34 @@ const APIFY_BASE = "https://api.apify.com/v2";
 // Actor IDs are env-overridable so a better actor can be swapped in without a
 // code change (Apify actors come and go, especially for Facebook).
 const X_ACTOR = process.env.APIFY_X_ACTOR || "apidojo/tweet-scraper";
-const FB_ACTOR = process.env.APIFY_FB_ACTOR || "apify/facebook-search-scraper";
+// Page-watchlist scraper (posts FROM listed pages). The old
+// facebook-search-scraper was removed: it matched Pages by name, not posts,
+// so it never provided mention monitoring.
+const FB_ACTOR = process.env.APIFY_FB_ACTOR || "apify/facebook-posts-scraper";
+
+// Facebook page watchlist — public pages where I-66 corridor coverage and
+// commuter reaction actually appear. Scraped only when FB_WATCHLIST="true"
+// (requires a paid Apify plan; ~$2 per 1,000 posts). Override the list with
+// FB_PAGES (comma-separated page URLs).
+const DEFAULT_FB_PAGES = [
+  // DC-market media
+  "https://www.facebook.com/wtopnews",
+  "https://www.facebook.com/NBCWashington",
+  "https://www.facebook.com/fox5dc",
+  "https://www.facebook.com/7NewsDC",
+  "https://www.facebook.com/wusa9",
+  "https://www.facebook.com/DCNewsNow",
+  "https://www.facebook.com/PotomacLocal",
+  "https://www.facebook.com/InsideNoVa",
+  // Client + agencies + public safety
+  "https://www.facebook.com/Ride66Express",
+  "https://www.facebook.com/VaDOT",
+  "https://www.facebook.com/VDOTNOVA",
+  "https://www.facebook.com/fairfaxcounty",
+  "https://www.facebook.com/PWCgov",
+  "https://www.facebook.com/VirginiaStatePolice",
+  "https://www.facebook.com/FairfaxCountyPD",
+];
 // LinkedIn has no open keyword search, so we run in "company-page mode": scrape
 // the recent posts of specific pages (LINKEDIN_PAGES) with a cookie-free
 // company-posts actor. No login, ToS-friendly — but only the pages' own posts,
@@ -78,16 +106,30 @@ export async function collectSocialItems(
     return [];
   }
 
-  const tasks: Array<{ name: string; run: () => Promise<RawItem[]> }> = [
-    { name: "X", run: () => collectX(keywords, token) },
-    { name: "Facebook", run: () => collectFacebook(keywords, token) },
-  ];
+  const tasks: Array<{ name: string; run: () => Promise<RawItem[]> }> = [];
+
+  // The Apify tweet-scraper is the fallback X source; when the official X API
+  // token is configured (x-official.ts, run as its own provider), skip the
+  // scraper so we don't pay twice for the same tweets.
+  if (!isXOfficialEnabled()) {
+    tasks.push({ name: "X", run: () => collectX(keywords, token) });
+  }
+
+  // Facebook page watchlist: posts FROM the curated public pages, filtered by
+  // the shared classifier. Explicitly opt-in (paid Apify plan required).
+  if (process.env.FB_WATCHLIST === "true") {
+    tasks.push({ name: "Facebook", run: () => collectFacebookPages(token) });
+  }
 
   // LinkedIn only runs when pages are configured — no point calling the actor
   // (and being billed) with nothing to scrape.
   const pages = linkedinPages();
   if (pages.length > 0) {
     tasks.push({ name: "LinkedIn", run: () => collectLinkedIn(pages, token) });
+  }
+
+  if (tasks.length === 0) {
+    return [];
   }
 
   const settled = await Promise.allSettled(tasks.map((t) => t.run()));
@@ -156,18 +198,23 @@ async function collectX(keywords: string[], token: string): Promise<RawItem[]> {
   }).filter((item) => item.url);
 }
 
-async function collectFacebook(
-  keywords: string[],
-  token: string,
-): Promise<RawItem[]> {
-  // apify/facebook-search-scraper takes keywords in `categories` (required) and
-  // caps with `resultsLimit`. It returns Facebook pages/results matching the
-  // terms (FB has no open *post* keyword search without a login). Output shape
-  // varies, so read fields defensively — covers post- and page-shaped results.
+// Comma-separated FB page URLs, falling back to the curated default watchlist.
+function facebookPages(): string[] {
+  const fromEnv = (process.env.FB_PAGES || "")
+    .split(",")
+    .map((page) => page.trim())
+    .filter(Boolean);
+  return fromEnv.length > 0 ? fromEnv : DEFAULT_FB_PAGES;
+}
+
+async function collectFacebookPages(token: string): Promise<RawItem[]> {
+  // apify/facebook-posts-scraper: recent posts FROM each watchlist page
+  // (startUrls), capped per page. Corridor relevance is decided downstream by
+  // the shared classifier, so pages can post about anything. Output shape
+  // varies across actor versions — read fields defensively.
   const input = {
-    categories: keywords,
-    locations: [] as string[],
-    resultsLimit: FB_MAX_ITEMS,
+    startUrls: facebookPages().map((url) => ({ url })),
+    resultsLimit: 3,
   };
 
   const raw = await runActor(FB_ACTOR, input, token, FB_MAX_ITEMS);

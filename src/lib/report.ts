@@ -1,3 +1,4 @@
+import { socialPlatform } from "@/lib/digest";
 import { getSupabase } from "@/lib/db";
 
 /**
@@ -48,6 +49,9 @@ export type Report = {
   // it; "featured" defaults come from the top of this ranking.
   items: ReportItem[];
   importantCount: number;
+  // Social breakdown for the Social Pulse section.
+  byPlatform: Array<{ platform: string; count: number }>;
+  socialPosts: ReportItem[]; // newest-first, capped
 };
 
 // Midnight Eastern approximated as 04:00 UTC. A DST hour of slop at each
@@ -188,6 +192,8 @@ export async function getReport(
     daily: [],
     items: [],
     importantCount: 0,
+    byPlatform: [],
+    socialPosts: [],
   };
 
   const supabase = getSupabase();
@@ -287,5 +293,21 @@ export async function getReport(
       .slice(0, 500),
     importantCount: items.filter((item) => item.priority === "important")
       .length,
+    byPlatform: (() => {
+      const counts = new Map<string, number>();
+      for (const item of items) {
+        if (item.sourceType === "social") {
+          const platform = socialPlatform(item.url);
+          counts.set(platform, (counts.get(platform) ?? 0) + 1);
+        }
+      }
+      return [...counts.entries()]
+        .map(([platform, count]) => ({ platform, count }))
+        .sort((a, b) => b.count - a.count);
+    })(),
+    // `items` arrives from the query newest-first; keep that order here.
+    socialPosts: items
+      .filter((item) => item.sourceType === "social")
+      .slice(0, 8),
   };
 }

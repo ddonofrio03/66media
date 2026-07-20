@@ -81,6 +81,12 @@ export async function GET(request: Request) {
     ),
   };
 
+  // Also logged (not just returned) so configuration is verifiable from
+  // Vercel runtime logs even when the GitHub Actions UI/API is unavailable.
+  console.log(
+    `[poll] config ${JSON.stringify(socialConfig)} providers ${JSON.stringify(collection.providerCounts)}`,
+  );
+
   const newItems = collection.items.filter((item) => !existingIds.has(item.id));
   if (newItems.length === 0) {
     console.log(

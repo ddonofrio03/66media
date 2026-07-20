@@ -1,4 +1,5 @@
 import Link from "next/link";
+import FeedbackButtons from "@/components/feedback-buttons";
 import { loadDashboardSnapshot, socialPlatform } from "@/lib/digest";
 import { monitoringConfig } from "@/lib/monitoring-config";
 import { getReport, lastNDaysRange, type ReportItem } from "@/lib/report";
@@ -236,6 +237,9 @@ function TopStory({ story }: { story: ReportItem }) {
         <span className="text-xs font-semibold text-[var(--muted)]">
           {story.source}
           {published ? ` · ${published}` : ""}
+        </span>
+        <span className="ml-auto">
+          <FeedbackButtons id={story.id} initial={story.feedback} />
         </span>
       </div>
       <a

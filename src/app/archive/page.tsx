@@ -1,6 +1,7 @@
 import { isPersistenceEnabled } from "@/lib/db";
 import { getArchiveItems, type ArchiveItem } from "@/lib/digest-store";
 import { monitoringConfig } from "@/lib/monitoring-config";
+import FeedbackButtons from "@/components/feedback-buttons";
 import SiteNav from "@/components/site-nav";
 
 export const dynamic = "force-dynamic";
@@ -195,11 +196,14 @@ function StoryCard({ item }: { item: ArchiveItem }) {
             {item.title}
           </a>
         </h3>
-        {item.priority === "important" && (
-          <span className="shrink-0 rounded-full bg-[#fdecec] px-2 py-1 text-xs font-semibold text-[var(--critical)]">
-            Important
-          </span>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {item.priority === "important" && (
+            <span className="rounded-full bg-[#fdecec] px-2 py-1 text-xs font-semibold text-[var(--critical)]">
+              Important
+            </span>
+          )}
+          <FeedbackButtons id={item.id} initial={item.feedback} />
+        </div>
       </div>
       <p className="mt-1 text-sm text-[var(--muted)]">
         {item.source}

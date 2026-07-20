@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getFeedbackExamples } from "@/lib/digest-store";
 import type { DigestItem, RelevanceLabel } from "@/lib/types";
 
 /**
@@ -95,6 +96,22 @@ export async function refineClassifications(
       maxRetries: 1,
     });
 
+    // Analyst thumbs-up/down votes from the site become calibration examples,
+    // so the classifier converges on the analyst's judgment over time.
+    const examples = await getFeedbackExamples();
+    const feedbackBlock =
+      examples.up.length || examples.down.length
+        ? `\n\nThe analyst has hand-labeled recent items — match their judgment:${
+            examples.up.length
+              ? `\nRELEVANT (thumbs-up) examples:\n${examples.up.map((t) => `- ${t}`).join("\n")}`
+              : ""
+          }${
+            examples.down.length
+              ? `\nNOT RELEVANT (thumbs-down) examples:\n${examples.down.map((t) => `- ${t}`).join("\n")}`
+              : ""
+          }`
+        : "";
+
     const payload = review.map((item, index) => ({
       id: String(index),
       title: item.title,
@@ -106,7 +123,7 @@ export async function refineClassifications(
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 4000,
-      system: SYSTEM_PROMPT,
+      system: `${SYSTEM_PROMPT}${feedbackBlock}`,
       output_config: {
         format: { type: "json_schema", schema: RESPONSE_SCHEMA },
       },

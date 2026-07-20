@@ -33,6 +33,7 @@ export type ReportItem = {
   priority: string;
   snippet: string;
   publishedAt: string | null;
+  feedback: string | null;
 };
 
 export type Report = {
@@ -201,31 +202,39 @@ export async function getReport(
     return base;
   }
 
-  let query = supabase
-    .from("digest_items")
-    .select(
-      "id, title, url, source, source_type, label, priority, snippet, published_at",
-    )
-    .gte("published_at", range.startUtc.toISOString())
-    .lt("published_at", range.endUtc.toISOString())
-    .order("published_at", { ascending: false })
-    .limit(2000);
-
   const term = q.replace(/[%,()*\\]/g, " ").trim().slice(0, 80);
-  if (term) {
-    query = query.or(
-      `title.ilike.%${term}%,source.ilike.%${term}%,snippet.ilike.%${term}%`,
-    );
-  }
+  const runQuery = (columns: string) => {
+    let query = supabase
+      .from("digest_items")
+      .select(columns)
+      .gte("published_at", range.startUtc.toISOString())
+      .lt("published_at", range.endUtc.toISOString())
+      .order("published_at", { ascending: false })
+      .limit(2000);
+    if (term) {
+      query = query.or(
+        `title.ilike.%${term}%,source.ilike.%${term}%,snippet.ilike.%${term}%`,
+      );
+    }
+    return query;
+  };
 
-  const { data, error } = await query;
+  // Tolerate the feedback column not existing yet (pre-migration).
+  let { data, error } = await runQuery(
+    "id, title, url, source, source_type, label, priority, snippet, published_at, feedback",
+  );
+  if (error && error.message.includes("feedback")) {
+    ({ data, error } = await runQuery(
+      "id, title, url, source, source_type, label, priority, snippet, published_at",
+    ));
+  }
 
   if (error) {
     console.error("[report] getReport failed:", error.message);
     return base;
   }
 
-  const items: ReportItem[] = (data ?? []).map((row) => ({
+  const items: ReportItem[] = ((data ?? []) as unknown as Array<Record<string, unknown>>).map((row) => ({
     id: row.id as string,
     title: row.title as string,
     url: row.url as string,
@@ -235,6 +244,7 @@ export async function getReport(
     priority: (row.priority as string) || "normal",
     snippet: (row.snippet as string | null) ?? "",
     publishedAt: (row.published_at as string | null) ?? null,
+    feedback: (row.feedback as string | null) ?? null,
   }));
 
   const typeCounts = new Map<string, number>();

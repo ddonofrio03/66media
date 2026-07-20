@@ -23,8 +23,17 @@ create table if not exists public.digest_items (
   last_seen_at  timestamptz not null default now(),
   -- the local (Eastern) date_key of the digest that first emailed this item,
   -- null until it actually goes out in a sent digest.
-  reported_on   text
+  reported_on   text,
+  -- Analyst thumbs up/down from the site; read back as calibration examples
+  -- by the AI relevance classifier.
+  feedback      text check (feedback in ('up', 'down')),
+  feedback_at   timestamptz
 );
+
+-- Migration for pre-existing databases (run once in the SQL editor):
+-- alter table public.digest_items
+--   add column if not exists feedback text check (feedback in ('up','down')),
+--   add column if not exists feedback_at timestamptz;
 
 create index if not exists digest_items_reported_on_idx on public.digest_items (reported_on);
 

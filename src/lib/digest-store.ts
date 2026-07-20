@@ -187,6 +187,7 @@ export type ArchiveItem = {
   snippet: string;
   publishedAt: string | null;
   firstSeenAt: string | null;
+  feedback: string | null;
 };
 
 /**
@@ -205,32 +206,34 @@ export async function getArchiveItems(opts: {
   }
 
   const limit = opts.limit ?? 500;
-  let query = supabase
-    .from("digest_items")
-    .select(
-      "id, title, url, source, source_type, label, priority, snippet, published_at, first_seen_at",
-    )
-    .order("published_at", { ascending: false, nullsFirst: false })
-    .limit(limit + 1);
-
-  if (opts.since) {
-    query = query.gte("published_at", opts.since);
-  }
-
   const term = (opts.q ?? "").replace(/[%,()*\\]/g, " ").trim().slice(0, 80);
-  if (term) {
-    query = query.or(
-      `title.ilike.%${term}%,source.ilike.%${term}%,snippet.ilike.%${term}%`,
-    );
-  }
+  const runQuery = (columns: string) => {
+    let query = supabase
+      .from("digest_items")
+      .select(columns)
+      .order("published_at", { ascending: false, nullsFirst: false })
+      .limit(limit + 1);
+    if (opts.since) {
+      query = query.gte("published_at", opts.since);
+    }
+    if (term) {
+      query = query.or(
+        `title.ilike.%${term}%,source.ilike.%${term}%,snippet.ilike.%${term}%`,
+      );
+    }
+    return query;
+  };
 
-  const { data, error } = await query;
+  const { data, error } = await selectWithFeedbackFallback(
+    runQuery,
+    "id, title, url, source, source_type, label, priority, snippet, published_at, first_seen_at",
+  );
   if (error) {
     console.error("[digest-store] getArchiveItems failed:", error.message);
     return { items: [], truncated: false };
   }
 
-  const rows = data ?? [];
+  const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
   const truncated = rows.length > limit;
   const items = rows.slice(0, limit).map((row) => ({
     id: row.id as string,
@@ -243,9 +246,96 @@ export async function getArchiveItems(opts: {
     snippet: (row.snippet as string | null) ?? "",
     publishedAt: (row.published_at as string | null) ?? null,
     firstSeenAt: (row.first_seen_at as string | null) ?? null,
+    feedback: (row.feedback as string | null) ?? null,
   }));
 
   return { items, truncated };
+}
+
+/**
+ * Persist a thumbs up/down vote (null clears). Fails softly with a hint until
+ * the feedback migration has been run in the Supabase SQL editor.
+ */
+export async function setFeedback(
+  id: string,
+  feedback: "up" | "down" | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const { error } = await supabase
+    .from("digest_items")
+    .update({
+      feedback,
+      feedback_at: feedback ? new Date().toISOString() : null,
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[digest-store] setFeedback failed:", error.message);
+    const hint = error.message.includes("feedback")
+      ? " (has the feedback migration been run in the Supabase SQL editor?)"
+      : "";
+    return { ok: false, error: `${error.message}${hint}` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Recent thumbs-up/down story titles, used as analyst examples in the AI
+ * classifier prompt. Returns empty lists until the migration exists.
+ */
+export async function getFeedbackExamples(): Promise<{
+  up: string[];
+  down: string[];
+}> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return { up: [], down: [] };
+  }
+
+  const { data, error } = await supabase
+    .from("digest_items")
+    .select("title, feedback")
+    .not("feedback", "is", null)
+    .order("feedback_at", { ascending: false })
+    .limit(40);
+
+  if (error) {
+    // Expected until the migration runs; never block classification on it.
+    return { up: [], down: [] };
+  }
+
+  const up: string[] = [];
+  const down: string[] = [];
+  for (const row of data ?? []) {
+    const bucket = row.feedback === "up" ? up : down;
+    if (bucket.length < 8) {
+      bucket.push(row.title as string);
+    }
+  }
+  return { up, down };
+}
+
+/**
+ * Run an item select with the feedback column, falling back to the legacy
+ * column list if the migration hasn't been applied yet — so pages keep
+ * working either way.
+ */
+async function selectWithFeedbackFallback(
+  run: (columns: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+  baseColumns: string,
+): Promise<{ data: unknown; error: { message: string } | null }> {
+  const withFeedback = await run(`${baseColumns}, feedback`);
+  if (!withFeedback.error) {
+    return withFeedback;
+  }
+  if (!withFeedback.error.message.includes("feedback")) {
+    return withFeedback;
+  }
+  return run(baseColumns);
 }
 
 /** Social posts from the archive, newest first, for the /social tab. */
@@ -258,26 +348,29 @@ export async function getSocialItems(opts: {
     return [];
   }
 
-  let query = supabase
-    .from("digest_items")
-    .select(
-      "id, title, url, source, source_type, label, priority, snippet, published_at, first_seen_at",
-    )
-    .eq("source_type", "social")
-    .order("published_at", { ascending: false, nullsFirst: false })
-    .limit(opts.limit ?? 300);
+  const runQuery = (columns: string) => {
+    let query = supabase
+      .from("digest_items")
+      .select(columns)
+      .eq("source_type", "social")
+      .order("published_at", { ascending: false, nullsFirst: false })
+      .limit(opts.limit ?? 300);
+    if (opts.since) {
+      query = query.gte("published_at", opts.since);
+    }
+    return query;
+  };
 
-  if (opts.since) {
-    query = query.gte("published_at", opts.since);
-  }
-
-  const { data, error } = await query;
+  const { data, error } = await selectWithFeedbackFallback(
+    runQuery,
+    "id, title, url, source, source_type, label, priority, snippet, published_at, first_seen_at",
+  );
   if (error) {
     console.error("[digest-store] getSocialItems failed:", error.message);
     return [];
   }
 
-  return (data ?? []).map((row) => ({
+  return ((data ?? []) as unknown as Array<Record<string, unknown>>).map((row) => ({
     id: row.id as string,
     title: row.title as string,
     url: row.url as string,
@@ -288,6 +381,7 @@ export async function getSocialItems(opts: {
     snippet: (row.snippet as string | null) ?? "",
     publishedAt: (row.published_at as string | null) ?? null,
     firstSeenAt: (row.first_seen_at as string | null) ?? null,
+    feedback: (row.feedback as string | null) ?? null,
   }));
 }
 

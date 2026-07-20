@@ -1,4 +1,5 @@
 import Link from "next/link";
+import FeedbackButtons from "@/components/feedback-buttons";
 import SiteNav from "@/components/site-nav";
 import { isPersistenceEnabled } from "@/lib/db";
 import { getSocialItems, type ArchiveItem } from "@/lib/digest-store";
@@ -188,6 +189,9 @@ function Post({ post }: { post: ArchiveItem }) {
         <span className="text-xs font-semibold text-[var(--muted)]">
           {post.source}
           {published ? ` · ${published}` : ""}
+        </span>
+        <span className="ml-auto">
+          <FeedbackButtons id={post.id} initial={post.feedback} />
         </span>
       </div>
       <a

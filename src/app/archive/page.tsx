@@ -94,7 +94,7 @@ export default async function ArchivePage({
           <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5">
             <div>
               <h1 className="text-3xl font-semibold tracking-normal md:text-4xl">
-                Story Archive
+                News
               </h1>
               <p className="mt-2 max-w-2xl text-base text-[var(--muted)]">
                 Every relevant story the monitor has collected, grouped by day.

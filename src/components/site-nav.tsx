@@ -12,7 +12,7 @@ type Section =
 
 const LINKS: Array<{ key: Section; href: string; label: string }> = [
   { key: "dashboard", href: "/", label: "Dashboard" },
-  { key: "archive", href: "/archive", label: "Archive" },
+  { key: "archive", href: "/archive", label: "News" },
   { key: "social", href: "/social", label: "Social" },
   { key: "sources", href: "/sources", label: "Sources" },
   { key: "settings", href: "/settings", label: "Keywords" },

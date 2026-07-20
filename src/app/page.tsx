@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { loadDashboardSnapshot } from "@/lib/digest";
+import { loadDashboardSnapshot, socialPlatform } from "@/lib/digest";
 import { monitoringConfig } from "@/lib/monitoring-config";
 import { getReport, lastNDaysRange, type ReportItem } from "@/lib/report";
 import { getSources, summarizeSources } from "@/lib/sources";
@@ -19,9 +19,28 @@ export default async function DashboardPage() {
   const summary = summarizeSources(sources);
   const digest = await loadDashboardSnapshot();
   // Top stories over the rolling last 7 days, straight from the archive —
-  // report.items is already ranked important -> confirmed -> likely.
+  // report.items is already ranked important -> confirmed -> likely. Up to two
+  // slots are reserved for high-signal SOCIAL posts (important/confirmed/
+  // likely) so corridor chatter surfaces alongside press coverage.
   const weekReport = await getReport(lastNDaysRange(7));
-  const topStories = weekReport.items.slice(0, 5);
+  const ranked = weekReport.items;
+  const topSocial = ranked
+    .filter(
+      (item) =>
+        item.sourceType === "social" &&
+        (item.priority === "important" ||
+          item.label === "confirmed_otb" ||
+          item.label === "likely_otb"),
+    )
+    .slice(0, 2);
+  const picked = new Set(topSocial.map((item) => item.id));
+  for (const item of ranked) {
+    if (picked.size >= 5) break;
+    if (item.sourceType !== "social") {
+      picked.add(item.id);
+    }
+  }
+  const topStories = ranked.filter((item) => picked.has(item.id)).slice(0, 5);
   const highPriority = sources.filter((source) => source.priority === "high");
 
   return (
@@ -209,6 +228,11 @@ function TopStory({ story }: { story: ReportItem }) {
         <span className="rounded-full bg-[#e6f3f1] px-2 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">
           {STORY_LABELS[story.label] ?? story.label}
         </span>
+        {story.sourceType === "social" && (
+          <span className="rounded-full bg-[#e8edf6] px-2 py-0.5 text-xs font-semibold text-[var(--info)]">
+            {socialPlatform(story.url)}
+          </span>
+        )}
         <span className="text-xs font-semibold text-[var(--muted)]">
           {story.source}
           {published ? ` · ${published}` : ""}

@@ -248,6 +248,49 @@ export async function getArchiveItems(opts: {
   return { items, truncated };
 }
 
+/** Social posts from the archive, newest first, for the /social tab. */
+export async function getSocialItems(opts: {
+  since?: string;
+  limit?: number;
+}): Promise<ArchiveItem[]> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return [];
+  }
+
+  let query = supabase
+    .from("digest_items")
+    .select(
+      "id, title, url, source, source_type, label, priority, snippet, published_at, first_seen_at",
+    )
+    .eq("source_type", "social")
+    .order("published_at", { ascending: false, nullsFirst: false })
+    .limit(opts.limit ?? 300);
+
+  if (opts.since) {
+    query = query.gte("published_at", opts.since);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("[digest-store] getSocialItems failed:", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    title: row.title as string,
+    url: row.url as string,
+    source: row.source as string,
+    sourceType: row.source_type as string,
+    label: row.label as string,
+    priority: row.priority as string,
+    snippet: (row.snippet as string | null) ?? "",
+    publishedAt: (row.published_at as string | null) ?? null,
+    firstSeenAt: (row.first_seen_at as string | null) ?? null,
+  }));
+}
+
 /** Latest stored snapshot, for the dashboard/preview to render without a live fetch. */
 export async function getLatestStoredSnapshot(): Promise<DigestSnapshot | null> {
   const supabase = getSupabase();

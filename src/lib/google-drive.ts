@@ -17,7 +17,12 @@ import { JWT } from "google-auth-library";
  * to a plain .pptx download.
  */
 
-const SCOPE = "https://www.googleapis.com/auth/drive.file";
+// NOT drive.file: that scope is limited to files the app itself created, so a
+// folder a human made and shared with the service account is invisible under it
+// and resolves as a 404. Writing into an existing shared folder needs the full
+// drive scope. The service account still only reaches what's explicitly shared
+// with it, so the real blast radius is that one folder.
+const SCOPE = "https://www.googleapis.com/auth/drive";
 const PPTX_MIME =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const SLIDES_MIME = "application/vnd.google-apps.presentation";
@@ -184,6 +189,14 @@ export async function uploadDeckToDrive(
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
+    // 404/403 on the parent folder is a sharing problem, not a broken upload —
+    // name the folder and the account that needs access, since the raw Drive
+    // message only quotes an opaque id.
+    if (response.status === 404 || response.status === 403) {
+      throw new Error(
+        `Drive can't see folder ${folderId} as ${email}. Open that folder in Drive, Share it with ${email} as Editor, and confirm GOOGLE_DRIVE_FOLDER_ID is the part of the folder URL after /folders/.`,
+      );
+    }
     throw new Error(
       `Drive upload failed (HTTP ${response.status}): ${detail.slice(0, 300)}`,
     );

@@ -29,11 +29,95 @@ export type DriveUploadResult = {
 };
 
 export function isDriveConfigured(): boolean {
+  if (!process.env.GOOGLE_DRIVE_FOLDER_ID) {
+    return false;
+  }
   return Boolean(
-    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL &&
-      process.env.GOOGLE_PRIVATE_KEY &&
-      process.env.GOOGLE_DRIVE_FOLDER_ID,
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+      (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL &&
+        process.env.GOOGLE_PRIVATE_KEY),
   );
+}
+
+/**
+ * Resolve the service-account credentials from the environment, tolerating the
+ * shapes a key realistically arrives in when it's moved by hand through a
+ * dashboard.
+ *
+ * Accepts either GOOGLE_SERVICE_ACCOUNT_JSON (the whole downloaded key file,
+ * pasted as-is — the least error-prone option) or the split
+ * GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY pair. The key itself may
+ * carry surrounding quotes, escaped \n, or real newlines; all three are
+ * normalised to a PEM block here rather than relying on a perfect paste.
+ */
+function loadCredentials(): { email: string; privateKey: string } {
+  const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+  if (rawJson) {
+    let parsed: { client_email?: string; private_key?: string };
+    try {
+      parsed = JSON.parse(rawJson);
+    } catch {
+      throw new Error(
+        "GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON — paste the entire downloaded key file, including the outermost { }.",
+      );
+    }
+    if (!parsed.client_email || !parsed.private_key) {
+      throw new Error(
+        "GOOGLE_SERVICE_ACCOUNT_JSON is missing client_email or private_key.",
+      );
+    }
+    return {
+      email: parsed.client_email,
+      privateKey: normalisePrivateKey(parsed.private_key),
+    };
+  }
+
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim().replace(
+    /^["']|["']$/g,
+    "",
+  );
+  const rawKey = process.env.GOOGLE_PRIVATE_KEY;
+  if (!email || !rawKey) {
+    throw new Error("Google Drive credentials are not configured.");
+  }
+  return { email, privateKey: normalisePrivateKey(rawKey) };
+}
+
+/** Coerce a pasted key into a real PEM block, or explain what's wrong with it. */
+function normalisePrivateKey(raw: string): string {
+  let key = raw.trim();
+
+  // Someone pasted the whole JSON file into GOOGLE_PRIVATE_KEY.
+  if (key.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(key) as { private_key?: string };
+      if (parsed.private_key) {
+        key = parsed.private_key.trim();
+      }
+    } catch {
+      // fall through to the checks below
+    }
+  }
+
+  // Strip a wrapping pair of quotes carried over from the JSON value.
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+
+  // Escaped newlines (how the JSON stores them, and how Vercel single-line
+  // values keep them) become real ones. Also normalise CRLF.
+  key = key.replace(/\\n/g, "\n").replace(/\r\n/g, "\n").trim();
+
+  if (!key.includes("-----BEGIN") || !key.includes("PRIVATE KEY-----")) {
+    throw new Error(
+      "The Google private key isn't a PEM block — it should begin with -----BEGIN PRIVATE KEY-----. Copy the private_key value out of the downloaded JSON without the surrounding quotes, or set GOOGLE_SERVICE_ACCOUNT_JSON to the whole file instead.",
+    );
+  }
+  // A PEM must end with a newline for the OpenSSL decoder.
+  return key.endsWith("\n") ? key : `${key}\n`;
 }
 
 /**
@@ -44,19 +128,28 @@ export async function uploadDeckToDrive(
   deck: Buffer,
   name: string,
 ): Promise<DriveUploadResult> {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-  const rawKey = process.env.GOOGLE_PRIVATE_KEY;
-
-  if (!email || !rawKey || !folderId) {
-    throw new Error("Google Drive is not configured.");
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim().replace(
+    /^["']|["']$/g,
+    "",
+  );
+  if (!folderId) {
+    throw new Error("GOOGLE_DRIVE_FOLDER_ID is not set.");
   }
 
-  // Vercel env vars store the PEM with literal \n sequences.
-  const privateKey = rawKey.replace(/\\n/g, "\n");
+  const { email, privateKey } = loadCredentials();
 
   const auth = new JWT({ email, key: privateKey, scopes: [SCOPE] });
-  const { token } = await auth.getAccessToken();
+  let token: string | null | undefined;
+  try {
+    ({ token } = await auth.getAccessToken());
+  } catch (error) {
+    // Key-parse and clock/JWT failures surface here as opaque OpenSSL codes;
+    // say which half of the setup is at fault.
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Google rejected the service-account credentials (${detail}). This is the key or the account, not the Drive folder.`,
+    );
+  }
   if (!token) {
     throw new Error("Could not obtain a Google access token.");
   }

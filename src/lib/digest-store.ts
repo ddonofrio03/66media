@@ -188,6 +188,8 @@ export type ArchiveItem = {
   publishedAt: string | null;
   firstSeenAt: string | null;
   feedback: string | null;
+  sentiment: string | null;
+  sentimentSource: string | null;
 };
 
 /**
@@ -224,7 +226,7 @@ export async function getArchiveItems(opts: {
     return query;
   };
 
-  const { data, error } = await selectWithFeedbackFallback(
+  const { data, error } = await selectWithOptionalColumns(
     runQuery,
     "id, title, url, source, source_type, label, priority, snippet, published_at, first_seen_at",
   );
@@ -247,6 +249,8 @@ export async function getArchiveItems(opts: {
     publishedAt: (row.published_at as string | null) ?? null,
     firstSeenAt: (row.first_seen_at as string | null) ?? null,
     feedback: (row.feedback as string | null) ?? null,
+    sentiment: (row.sentiment as string | null) ?? null,
+    sentimentSource: (row.sentiment_source as string | null) ?? null,
   }));
 
   return { items, truncated };
@@ -281,6 +285,107 @@ export async function setFeedback(
     return { ok: false, error: `${error.message}${hint}` };
   }
   return { ok: true };
+}
+
+export type SentimentValue = "positive" | "neutral" | "negative";
+
+/**
+ * Persist an analyst's sentiment call (null clears). Always stamps
+ * sentiment_source='manual', which permanently excludes the row from automatic
+ * re-scoring — a human judgment is never silently reverted by a later AI pass.
+ */
+export async function setSentiment(
+  id: string,
+  sentiment: SentimentValue | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const { error } = await supabase
+    .from("digest_items")
+    .update({
+      sentiment,
+      // Clearing drops back to unscored, not back to the AI's guess: the next
+      // scoring pass will pick the story up again.
+      sentiment_source: sentiment ? "manual" : null,
+      sentiment_at: sentiment ? new Date().toISOString() : null,
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[digest-store] setSentiment failed:", error.message);
+    const hint = error.message.includes("sentiment")
+      ? " (has the sentiment migration been run in the Supabase SQL editor?)"
+      : "";
+    return { ok: false, error: `${error.message}${hint}` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Of these ids, the ones with no sentiment recorded yet. Rows an analyst has
+ * scored by hand are never returned, so the AI pass cannot overwrite them.
+ * Returns an empty set (score nothing) if the migration hasn't run.
+ */
+export async function getUnscoredIds(ids: string[]): Promise<Set<string>> {
+  const supabase = getSupabase();
+  if (!supabase || ids.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await supabase
+    .from("digest_items")
+    .select("id, sentiment")
+    .in("id", ids)
+    .is("sentiment", null);
+
+  if (error) {
+    // Expected until the migration runs; scoring is skipped entirely.
+    return new Set();
+  }
+
+  return new Set((data ?? []).map((row) => row.id as string));
+}
+
+/**
+ * Write AI-scored sentiment. Guarded on sentiment_source so a manual call made
+ * between scoring and writing still wins the race.
+ */
+export async function storeAutoSentiment(
+  scores: Array<{ id: string; sentiment: SentimentValue }>,
+): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase || scores.length === 0) {
+    return;
+  }
+
+  const scoredAt = new Date().toISOString();
+  const byValue = new Map<SentimentValue, string[]>();
+  for (const { id, sentiment } of scores) {
+    byValue.set(sentiment, [...(byValue.get(sentiment) ?? []), id]);
+  }
+
+  // One update per distinct value (at most three) rather than per item.
+  for (const [sentiment, ids] of byValue) {
+    const { error } = await supabase
+      .from("digest_items")
+      .update({
+        sentiment,
+        sentiment_source: "auto",
+        sentiment_at: scoredAt,
+      })
+      .in("id", ids)
+      // NOT `.neq(...)`: SQL `sentiment_source <> 'manual'` is NULL for
+      // never-scored rows, which would exclude the very rows we mean to fill.
+      .or("sentiment_source.is.null,sentiment_source.neq.manual");
+
+    if (error) {
+      console.error("[digest-store] storeAutoSentiment failed:", error.message);
+      return;
+    }
+  }
 }
 
 /**
@@ -320,22 +425,39 @@ export async function getFeedbackExamples(): Promise<{
 }
 
 /**
- * Run an item select with the feedback column, falling back to the legacy
- * column list if the migration hasn't been applied yet — so pages keep
- * working either way.
+ * Optional analyst columns, richest first. Each has its own migration, so a
+ * database may have any prefix of these applied.
  */
-async function selectWithFeedbackFallback(
+const OPTIONAL_COLUMN_SETS = [
+  ", feedback, sentiment, sentiment_source",
+  ", feedback",
+  "",
+];
+
+function isMissingOptionalColumn(message: string): boolean {
+  return message.includes("feedback") || message.includes("sentiment");
+}
+
+/**
+ * Run an item select with the optional analyst columns, degrading to a smaller
+ * column list when a migration hasn't been applied yet — so pages keep working
+ * either way.
+ */
+async function selectWithOptionalColumns(
   run: (columns: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
   baseColumns: string,
 ): Promise<{ data: unknown; error: { message: string } | null }> {
-  const withFeedback = await run(`${baseColumns}, feedback`);
-  if (!withFeedback.error) {
-    return withFeedback;
+  let result: { data: unknown; error: { message: string } | null } = {
+    data: null,
+    error: { message: "no column set attempted" },
+  };
+  for (const extra of OPTIONAL_COLUMN_SETS) {
+    result = await run(`${baseColumns}${extra}`);
+    if (!result.error || !isMissingOptionalColumn(result.error.message)) {
+      return result;
+    }
   }
-  if (!withFeedback.error.message.includes("feedback")) {
-    return withFeedback;
-  }
-  return run(baseColumns);
+  return result;
 }
 
 /** Social posts from the archive, newest first, for the /social tab. */
@@ -361,7 +483,7 @@ export async function getSocialItems(opts: {
     return query;
   };
 
-  const { data, error } = await selectWithFeedbackFallback(
+  const { data, error } = await selectWithOptionalColumns(
     runQuery,
     "id, title, url, source, source_type, label, priority, snippet, published_at, first_seen_at",
   );
@@ -382,6 +504,8 @@ export async function getSocialItems(opts: {
     publishedAt: (row.published_at as string | null) ?? null,
     firstSeenAt: (row.first_seen_at as string | null) ?? null,
     feedback: (row.feedback as string | null) ?? null,
+    sentiment: (row.sentiment as string | null) ?? null,
+    sentimentSource: (row.sentiment_source as string | null) ?? null,
   }));
 }
 

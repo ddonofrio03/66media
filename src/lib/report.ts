@@ -34,6 +34,26 @@ export type ReportItem = {
   snippet: string;
   publishedAt: string | null;
   feedback: string | null;
+  sentiment: string | null;
+  sentimentSource: string | null;
+};
+
+/**
+ * Sentiment toward the 66 Express across the range. `scored` is the
+ * denominator for the percentages — unscored items are excluded rather than
+ * counted as neutral, so the meter never overstates how much coverage was
+ * actually assessed. `adjusted` is how many of the scored items an analyst set
+ * by hand.
+ */
+export type SentimentMix = {
+  positive: number;
+  neutral: number;
+  negative: number;
+  scored: number;
+  unscored: number;
+  adjusted: number;
+  /** -100 (all negative) to +100 (all positive); null when nothing is scored. */
+  net: number | null;
 };
 
 export type Report = {
@@ -50,6 +70,7 @@ export type Report = {
   // it; "featured" defaults come from the top of this ranking.
   items: ReportItem[];
   importantCount: number;
+  sentiment: SentimentMix;
   // Social breakdown for the Social Pulse section.
   byPlatform: Array<{ platform: string; count: number }>;
   socialPosts: ReportItem[]; // newest-first, capped
@@ -176,6 +197,45 @@ export function customRange(fromKey: string, toKey: string): ReportRange {
   };
 }
 
+/* --------------------------- Range from params ------------------------ */
+
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH_KEY = /^\d{4}-\d{2}$/;
+
+export type ReportParams = {
+  period?: string;
+  week?: string;
+  month?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+};
+
+/**
+ * Resolve URL/query params to a range. Shared by the reports page and the deck
+ * export so a generated deck always covers exactly the period on screen.
+ */
+export function resolveReportRange(params: ReportParams): ReportRange {
+  if (params.period === "monthly") {
+    return monthlyRange(
+      MONTH_KEY.test(params.month ?? "")
+        ? (params.month as string)
+        : currentMonthKey(),
+    );
+  }
+  if (
+    params.period === "custom" &&
+    DATE_KEY.test(params.from ?? "") &&
+    DATE_KEY.test(params.to ?? "")
+  ) {
+    return customRange(params.from as string, params.to as string);
+  }
+  // Weekly (Sat–Fri) is the default — it matches the client deliverable cadence.
+  return weeklyRange(
+    DATE_KEY.test(params.week ?? "") ? (params.week as string) : currentWeekKey(),
+  );
+}
+
 /* ------------------------------ Report ------------------------------- */
 
 export async function getReport(
@@ -193,6 +253,15 @@ export async function getReport(
     daily: [],
     items: [],
     importantCount: 0,
+    sentiment: {
+      positive: 0,
+      neutral: 0,
+      negative: 0,
+      scored: 0,
+      unscored: 0,
+      adjusted: 0,
+      net: null,
+    },
     byPlatform: [],
     socialPosts: [],
   };
@@ -219,14 +288,18 @@ export async function getReport(
     return query;
   };
 
-  // Tolerate the feedback column not existing yet (pre-migration).
+  // Tolerate the optional analyst columns not existing yet: each has its own
+  // migration, so degrade through the column sets until one selects cleanly.
+  const BASE_COLUMNS =
+    "id, title, url, source, source_type, label, priority, snippet, published_at";
   let { data, error } = await runQuery(
-    "id, title, url, source, source_type, label, priority, snippet, published_at, feedback",
+    `${BASE_COLUMNS}, feedback, sentiment, sentiment_source`,
   );
+  if (error && error.message.includes("sentiment")) {
+    ({ data, error } = await runQuery(`${BASE_COLUMNS}, feedback`));
+  }
   if (error && error.message.includes("feedback")) {
-    ({ data, error } = await runQuery(
-      "id, title, url, source, source_type, label, priority, snippet, published_at",
-    ));
+    ({ data, error } = await runQuery(BASE_COLUMNS));
   }
 
   if (error) {
@@ -245,6 +318,8 @@ export async function getReport(
     snippet: (row.snippet as string | null) ?? "",
     publishedAt: (row.published_at as string | null) ?? null,
     feedback: (row.feedback as string | null) ?? null,
+    sentiment: (row.sentiment as string | null) ?? null,
+    sentimentSource: (row.sentiment_source as string | null) ?? null,
   }));
 
   const typeCounts = new Map<string, number>();
@@ -303,6 +378,28 @@ export async function getReport(
       .slice(0, 500),
     importantCount: items.filter((item) => item.priority === "important")
       .length,
+    sentiment: (() => {
+      const counts = { positive: 0, neutral: 0, negative: 0 };
+      let adjusted = 0;
+      for (const item of items) {
+        if (item.sentiment && item.sentiment in counts) {
+          counts[item.sentiment as keyof typeof counts]++;
+          if (item.sentimentSource === "manual") {
+            adjusted++;
+          }
+        }
+      }
+      const scored = counts.positive + counts.neutral + counts.negative;
+      return {
+        ...counts,
+        scored,
+        unscored: items.length - scored,
+        adjusted,
+        net: scored
+          ? Math.round(((counts.positive - counts.negative) / scored) * 100)
+          : null,
+      };
+    })(),
     byPlatform: (() => {
       const counts = new Map<string, number>();
       for (const item of items) {

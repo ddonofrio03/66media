@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import { useMemo, useState } from "react";
-import type { Report, ReportItem } from "@/lib/report";
+import SentimentControl from "@/components/sentiment-control";
+import type { Report, ReportItem, SentimentMix } from "@/lib/report";
 
 /**
  * Client-side report document. Data (Eastern-time day buckets, relevance mix,
@@ -150,6 +151,8 @@ function downloadCsv(report: Report) {
     "Media type",
     "Relevance",
     "Priority",
+    "Sentiment",
+    "Sentiment set by",
     "URL",
     "Snippet",
   ];
@@ -160,6 +163,12 @@ function downloadCsv(report: Report) {
     typeLabel(item),
     LABEL_LABELS[item.label] ?? item.label,
     item.priority,
+    item.sentiment ?? "not scored",
+    item.sentimentSource === "manual"
+      ? "analyst"
+      : item.sentimentSource === "auto"
+        ? "automatic"
+        : "",
     item.url,
     item.snippet,
   ]);
@@ -201,6 +210,91 @@ export default function ReportView({
           .map((item) => item.id),
       ),
   );
+
+  // Sentiment edits made since the page loaded, keyed by item id. Applied as a
+  // delta to the server-computed mix rather than recounting client-side: the
+  // coverage index is capped at 500 rows while the mix covers the whole range.
+  const [sentimentEdits, setSentimentEdits] = useState<
+    Record<string, string | null>
+  >({});
+
+  const sentimentMix = useMemo(
+    () => applySentimentEdits(report, sentimentEdits),
+    [report, sentimentEdits],
+  );
+
+  const [exportState, setExportState] = useState<
+    | { kind: "idle" }
+    | { kind: "working" }
+    | { kind: "done"; url: string; name: string }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  /**
+   * Post the current range plus the analyst's curation to the export route.
+   * "drive" uploads and converts to Slides; "download" returns the raw .pptx
+   * (also the automatic fallback when Drive isn't configured).
+   */
+  async function exportDeck(destination: "drive" | "download") {
+    setExportState({ kind: "working" });
+    const payload = {
+      params: Object.fromEntries(new URLSearchParams(window.location.search)),
+      title,
+      clientName,
+      summary,
+      featuredIds: [...featuredIds],
+      generatedOn,
+      destination,
+    };
+
+    try {
+      const response = await fetch("/api/export/slides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const contentType = response.headers.get("content-type") ?? "";
+      if (response.ok && !contentType.includes("application/json")) {
+        // Raw .pptx came back — save it.
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${title} — ${report.range.label}.pptx`.replace(
+          /[\\/:*?"<>|]/g,
+          "-",
+        );
+        link.click();
+        URL.revokeObjectURL(url);
+        setExportState({ kind: "idle" });
+        return;
+      }
+
+      const data = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        webViewLink?: string;
+        name?: string;
+      };
+      if (!response.ok || !data.ok || !data.webViewLink) {
+        throw new Error(data.error ?? `Export failed (HTTP ${response.status}).`);
+      }
+      setExportState({
+        kind: "done",
+        url: data.webViewLink,
+        name: data.name ?? title,
+      });
+    } catch (error) {
+      setExportState({
+        kind: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not export the deck.",
+      });
+    }
+  }
 
   const featured = report.items.filter((item) => featuredIds.has(item.id));
   const maxDaily = Math.max(1, ...report.daily.map((d) => d.count));
@@ -260,6 +354,16 @@ export default function ReportView({
             </button>
             <button
               type="button"
+              onClick={() => exportDeck("drive")}
+              disabled={exportState.kind === "working"}
+              className="rounded-lg border border-[var(--line)] px-4 py-2 text-sm font-bold hover:bg-[#f7f9f8] disabled:opacity-50"
+            >
+              {exportState.kind === "working"
+                ? "Building deck…"
+                : "Send to Google Slides"}
+            </button>
+            <button
+              type="button"
               onClick={() => window.print()}
               className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)]"
             >
@@ -267,9 +371,38 @@ export default function ReportView({
             </button>
           </div>
         </div>
+        {exportState.kind === "done" ? (
+          <p className="mt-3 text-xs leading-5">
+            <a
+              href={exportState.url}
+              target="_blank"
+              rel="noreferrer"
+              className="font-bold text-[var(--accent)] underline decoration-1 underline-offset-2"
+            >
+              Open “{exportState.name}” in Google Slides →
+            </a>{" "}
+            <span className="text-[var(--muted)]">
+              Saved to the shared reports folder.
+            </span>
+          </p>
+        ) : null}
+        {exportState.kind === "error" ? (
+          <p className="mt-3 text-xs leading-5 text-[#c0392b]">
+            {exportState.message}{" "}
+            <button
+              type="button"
+              onClick={() => exportDeck("download")}
+              className="font-bold underline decoration-1 underline-offset-2"
+            >
+              Download the .pptx instead
+            </button>
+            .
+          </p>
+        ) : null}
         <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
           The web report plays supported clips inline. A saved PDF keeps
-          clickable source links; playback stays in this web view.
+          clickable source links; playback stays in this web view. The Slides
+          export carries your edited title, summary, and featured selection.
         </p>
       </section>
 
@@ -476,17 +609,8 @@ export default function ReportView({
             </ReportPanel>
           </div>
 
-          <div className="mt-5 rounded-2xl border border-[#d0ccc9] bg-white p-5">
-            <h3 className="text-sm font-extrabold uppercase tracking-[0.08em] text-[#105cae]">
-              Measurement note
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              This report intentionally omits AVE, unverified reach, and
-              automated sentiment. Counts reflect verified, deduplicated
-              mentions captured by the 66 Media Monitor across DC-market TV and
-              radio (including aired-segment transcripts), regional and corridor
-              outlets, news search, and public social channels.
-            </p>
+          <div className="mt-5">
+            <SentimentMeter mix={sentimentMix} />
           </div>
         </section>
 
@@ -632,6 +756,7 @@ export default function ReportView({
                     <th>Mention</th>
                     <th>Publisher</th>
                     <th>Type</th>
+                    <th className="no-print">Sentiment</th>
                     <th>Date</th>
                     <th>Link</th>
                   </tr>
@@ -658,6 +783,19 @@ export default function ReportView({
                       </td>
                       <td>{item.source}</td>
                       <td>{typeLabel(item)}</td>
+                      <td className="no-print">
+                        <SentimentControl
+                          id={item.id}
+                          initial={item.sentiment}
+                          initialSource={item.sentimentSource}
+                          onChange={(value) =>
+                            setSentimentEdits((edits) => ({
+                              ...edits,
+                              [item.id]: value,
+                            }))
+                          }
+                        />
+                      </td>
                       <td>{formatItemDate(item)}</td>
                       <td>
                         <a
@@ -733,6 +871,146 @@ function MixBars({
         );
       })}
     </div>
+  );
+}
+
+type Bucket = "positive" | "neutral" | "negative";
+
+function isBucket(value: string | null): value is Bucket {
+  return value === "positive" || value === "neutral" || value === "negative";
+}
+
+/**
+ * Fold in-page sentiment edits into the server-computed mix. Each edit moves
+ * one item out of its old bucket and into the new one (or out of "scored"
+ * entirely when cleared), so the meter stays exact without re-querying.
+ */
+function applySentimentEdits(
+  report: Report,
+  edits: Record<string, string | null>,
+): SentimentMix {
+  const entries = Object.entries(edits);
+  if (entries.length === 0) {
+    return report.sentiment;
+  }
+
+  const mix = { ...report.sentiment };
+  for (const [id, next] of entries) {
+    const item = report.items.find((candidate) => candidate.id === id);
+    if (!item) {
+      continue;
+    }
+    const previous = item.sentiment;
+    if (previous === next) {
+      continue;
+    }
+
+    if (isBucket(previous)) {
+      mix[previous]--;
+      mix.scored--;
+      mix.unscored++;
+      if (item.sentimentSource === "manual") {
+        mix.adjusted--;
+      }
+    }
+    if (isBucket(next)) {
+      mix[next]++;
+      mix.scored++;
+      mix.unscored--;
+      mix.adjusted++; // an in-page edit is a manual call by definition
+    }
+  }
+
+  mix.net = mix.scored
+    ? Math.round(((mix.positive - mix.negative) / mix.scored) * 100)
+    : null;
+  return mix;
+}
+
+/**
+ * Sentiment toward the 66 Express: a single stacked bar plus a net score.
+ * Percentages are of SCORED items, not of total mentions — and the unscored
+ * remainder is stated plainly underneath, so the meter can't imply more
+ * assessment than actually happened.
+ */
+function SentimentMeter({ mix }: { mix: SentimentMix }) {
+  const segments = [
+    { key: "positive", label: "Positive", count: mix.positive, color: "#1a7f4b" },
+    { key: "neutral", label: "Neutral", count: mix.neutral, color: "#8a8580" },
+    { key: "negative", label: "Negative", count: mix.negative, color: "#c0392b" },
+  ];
+  const pct = (count: number) =>
+    mix.scored ? Math.round((count / mix.scored) * 100) : 0;
+
+  return (
+    <ReportPanel title="Sentiment toward the 66 Express">
+      {mix.scored === 0 ? (
+        <EmptyState>
+          No coverage scored for sentiment in this period.
+        </EmptyState>
+      ) : (
+        <div className="py-2">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <div className="text-3xl font-extrabold leading-none text-[#105cae]">
+                {mix.net! > 0 ? `+${mix.net}` : mix.net}
+              </div>
+              <div className="mt-1 text-xs uppercase tracking-wide text-[var(--muted)]">
+                Net sentiment
+              </div>
+            </div>
+            <div className="text-right text-sm text-[var(--muted)]">
+              {mix.scored} of {mix.scored + mix.unscored} mentions scored
+              {mix.adjusted > 0 ? (
+                <>
+                  <br />
+                  {mix.adjusted} adjusted by an analyst
+                </>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-[#e4e1de]">
+            {segments.map((segment) =>
+              segment.count ? (
+                <div
+                  key={segment.key}
+                  title={`${segment.label}: ${segment.count}`}
+                  style={{
+                    width: `${pct(segment.count)}%`,
+                    backgroundColor: segment.color,
+                  }}
+                />
+              ) : null,
+            )}
+          </div>
+
+          <ul className="mt-3 flex flex-wrap gap-x-6 gap-y-1.5 text-sm">
+            {segments.map((segment) => (
+              <li key={segment.key} className="flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: segment.color }}
+                />
+                <span className="font-semibold">{segment.label}</span>
+                <span className="text-[var(--muted)]">
+                  {segment.count} · {pct(segment.count)}%
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {mix.unscored > 0 ? (
+            <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
+              Percentages are of scored coverage. {mix.unscored} mention
+              {mix.unscored === 1 ? "" : "s"} in this period {mix.unscored === 1 ? "is" : "are"} not
+              scored — sentiment is assessed for confirmed and likely Outside
+              the Beltway coverage only.
+            </p>
+          ) : null}
+        </div>
+      )}
+    </ReportPanel>
   );
 }
 

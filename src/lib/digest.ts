@@ -6,6 +6,7 @@ import {
 } from "@/lib/digest-store";
 import { monitoringConfig } from "@/lib/monitoring-config";
 import { getMonitoringSettings } from "@/lib/monitoring-settings";
+import { scoreAndStoreSentiment } from "@/lib/sentiment";
 import { getSources } from "@/lib/sources";
 import { getDigestLookbackHours } from "@/lib/time";
 import type { DigestItem, DigestSnapshot } from "@/lib/types";
@@ -28,6 +29,7 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
     collectedItems.map((item) => item.id),
   );
   await upsertCollectedItems(collectedItems, now);
+  await scoreAndStoreSentiment(collectedItems);
 
   // An item is shown if it's critical or has never been emailed before.
   const shown = collectedItems.filter(

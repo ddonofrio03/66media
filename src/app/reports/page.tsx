@@ -4,14 +4,13 @@ import SiteNav from "@/components/site-nav";
 import {
   currentMonthKey,
   currentWeekKey,
-  customRange,
   getReport,
-  monthlyRange,
+  resolveReportRange,
   shiftMonthKey,
   shiftWeekKey,
   weeklyRange,
   type Report,
-  type ReportRange,
+  type ReportParams,
 } from "@/lib/report";
 import ReportView from "./report-view";
 
@@ -25,40 +24,9 @@ const montserrat = Montserrat({
   weight: ["400", "600", "700", "800"],
 });
 
-const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
-const MONTH_KEY = /^\d{4}-\d{2}$/;
+type Params = ReportParams;
 
-type Params = {
-  period?: string;
-  week?: string;
-  month?: string;
-  from?: string;
-  to?: string;
-  q?: string;
-};
-
-function resolveRange(params: Params): ReportRange {
-  if (params.period === "monthly") {
-    return monthlyRange(
-      MONTH_KEY.test(params.month ?? "")
-        ? (params.month as string)
-        : currentMonthKey(),
-    );
-  }
-  if (
-    params.period === "custom" &&
-    DATE_KEY.test(params.from ?? "") &&
-    DATE_KEY.test(params.to ?? "")
-  ) {
-    return customRange(params.from as string, params.to as string);
-  }
-  // Weekly (Sat–Fri) is the default — it matches the client deliverable cadence.
-  return weeklyRange(
-    DATE_KEY.test(params.week ?? "")
-      ? (params.week as string)
-      : currentWeekKey(),
-  );
-}
+const resolveRange = resolveReportRange;
 
 function defaultSummary(report: Report): string {
   if (report.totalMentions === 0) {

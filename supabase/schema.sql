@@ -27,13 +27,28 @@ create table if not exists public.digest_items (
   -- Analyst thumbs up/down from the site; read back as calibration examples
   -- by the AI relevance classifier.
   feedback      text check (feedback in ('up', 'down')),
-  feedback_at   timestamptz
+  feedback_at   timestamptz,
+  -- Coverage sentiment TOWARD the 66 Express (not the general tone of the
+  -- story). Scored automatically for confirmed/likely items, then overridable
+  -- by an analyst on the site. sentiment_source='manual' is permanent: the AI
+  -- pass skips those rows forever, so a human call is never silently reverted.
+  sentiment        text check (sentiment in ('positive', 'neutral', 'negative')),
+  sentiment_source text check (sentiment_source in ('auto', 'manual')),
+  sentiment_at     timestamptz
 );
 
 -- Migration for pre-existing databases (run once in the SQL editor):
 -- alter table public.digest_items
 --   add column if not exists feedback text check (feedback in ('up','down')),
 --   add column if not exists feedback_at timestamptz;
+--
+-- Sentiment meter migration (run once in the SQL editor):
+-- alter table public.digest_items
+--   add column if not exists sentiment text
+--     check (sentiment in ('positive','neutral','negative')),
+--   add column if not exists sentiment_source text
+--     check (sentiment_source in ('auto','manual')),
+--   add column if not exists sentiment_at timestamptz;
 
 create index if not exists digest_items_reported_on_idx on public.digest_items (reported_on);
 

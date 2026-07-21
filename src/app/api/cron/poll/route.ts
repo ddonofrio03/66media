@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { refineClassifications } from "@/lib/ai-classify";
+import { scoreAndStoreSentiment } from "@/lib/sentiment";
 import { sendAlerts, shouldAlert } from "@/lib/alerts";
 import { collectDigestItems } from "@/lib/collectors";
 import { isXOfficialEnabled } from "@/lib/x-official";
@@ -107,6 +108,7 @@ export async function GET(request: Request) {
   // may drop false positives before they're stored or alerted).
   const refined = await refineClassifications(newItems);
   await upsertCollectedItems(refined, now);
+  await scoreAndStoreSentiment(refined);
 
   const alertable = refined.filter(shouldAlert);
   const result = await sendAlerts(alertable);

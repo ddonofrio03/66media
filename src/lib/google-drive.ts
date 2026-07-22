@@ -33,6 +33,10 @@ export type DriveUploadResult = {
   webViewLink: string;
 };
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function isDriveConfigured(): boolean {
   if (!process.env.GOOGLE_DRIVE_FOLDER_ID) {
     return false;
@@ -175,17 +179,55 @@ export async function uploadDeckToDrive(
     Buffer.from(`\r\n--${boundary}--\r\n`),
   ]);
 
-  const response = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink&supportsAllDrives=true",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
-      body: new Uint8Array(body),
-    },
-  );
+  // Drive converts the .pptx to Slides during ingest, and its gateway
+  // intermittently 502/503s mid-conversion — a transient failure, not a bad
+  // request. Retry those (and network drops) a few times with backoff; let
+  // 4xx (auth, sharing, bad request) fail immediately since retrying won't
+  // help. The whole thing stays inside the route's 60s budget.
+  const RETRY_STATUSES = new Set([500, 502, 503, 504]);
+  const MAX_ATTEMPTS = 3;
+  let response: Response | null = null;
+  let lastTransient = "";
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      response = await fetch(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink&supportsAllDrives=true",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": `multipart/related; boundary=${boundary}`,
+          },
+          body: new Uint8Array(body),
+        },
+      );
+    } catch (error) {
+      // Network-level failure (connection reset, DNS, socket hang-up).
+      lastTransient = error instanceof Error ? error.message : String(error);
+      response = null;
+      if (attempt < MAX_ATTEMPTS) {
+        await delay(attempt * 1500);
+        continue;
+      }
+      throw new Error(
+        `Drive upload failed after ${MAX_ATTEMPTS} attempts (network): ${lastTransient}`,
+      );
+    }
+
+    if (response.ok || !RETRY_STATUSES.has(response.status)) {
+      break; // success, or a non-retryable error handled below
+    }
+
+    lastTransient = `HTTP ${response.status}`;
+    if (attempt < MAX_ATTEMPTS) {
+      await delay(attempt * 1500);
+    }
+  }
+
+  if (!response) {
+    throw new Error(`Drive upload failed (network): ${lastTransient}`);
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -195,6 +237,11 @@ export async function uploadDeckToDrive(
     if (response.status === 404 || response.status === 403) {
       throw new Error(
         `Drive can't see folder ${folderId} as ${email}. Open that folder in Drive, Share it with ${email} as Editor, and confirm GOOGLE_DRIVE_FOLDER_ID is the part of the folder URL after /folders/.`,
+      );
+    }
+    if (RETRY_STATUSES.has(response.status)) {
+      throw new Error(
+        `Google Drive is temporarily unavailable (HTTP ${response.status}) — it returned a server error while converting the deck, even after ${MAX_ATTEMPTS} tries. This is on Google's side; try again in a minute, or use the .pptx download.`,
       );
     }
     throw new Error(

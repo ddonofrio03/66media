@@ -236,6 +236,21 @@ export function resolveReportRange(params: ReportParams): ReportRange {
   );
 }
 
+/** The period immediately before `range`, same length — for trend comparison. */
+export function previousRange(range: ReportRange): ReportRange {
+  if (range.period === "weekly") {
+    return weeklyRange(shiftWeekKey(range.key, -1));
+  }
+  if (range.period === "monthly") {
+    return monthlyRange(shiftMonthKey(range.key, -1));
+  }
+  // Custom: the same number of days ending the day before this range starts.
+  const days = range.dayKeys.length;
+  const end = addDays(range.dayKeys[0], -1);
+  const start = addDays(end, -(days - 1));
+  return customRange(start, end);
+}
+
 /* ------------------------------ Report ------------------------------- */
 
 export async function getReport(

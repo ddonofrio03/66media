@@ -1,18 +1,28 @@
 import PptxGenJS from "pptxgenjs";
 import { socialPlatform } from "@/lib/digest";
 import type { Report, ReportItem } from "@/lib/report";
+import type { SentimentTrend } from "@/lib/report-insights";
 
 /**
- * Renders a report as a 16:9 PowerPoint deck.
+ * Renders a report as an 8.5×11 portrait PowerPoint deck, matching the layout
+ * of TCG's weekly "Executive Summary" deliverable rather than a generic slide
+ * shape.
  *
  * PPTX rather than direct Google Slides API drawing: Google converts .pptx to
- * a native, fully-editable Slides deck on upload, and .pptx is the same format
- * as TCG's existing Executive Summary deck. Building the layout here (instead
- * of as Slides API batchUpdate calls) also keeps it readable and changeable.
+ * a native editable Slides deck on upload, and .pptx is the same format as the
+ * existing Exec Summary decks.
  *
- * Styling follows the Feb 2023 brand guidelines, matching the web report:
- * navy cover with orange frame rules, blue uppercase headings over the
- * signature orange dashed rule, Montserrat throughout.
+ * Section order follows the client template:
+ *   1. Cover + table of contents
+ *   2. Weekly Overview divider
+ *   3. Facility mentions — counts (Online/Print · Radio · TV), sentiment,
+ *      topics, outlets, then the itemised list
+ *   4. Relevant News — adjacent/industry stories
+ *   5. Social — counts, sentiment, trend, themes, posts by platform
+ *   6. Comments & Screenshots — a placeholder the analyst fills by hand
+ *
+ * Comment taxonomy and screenshots stay manual for now, so the deck ends with
+ * a labelled placeholder rather than fabricating those pages.
  */
 
 const BLUE = "105CAE";
@@ -32,24 +42,24 @@ const NEGATIVE = "C0392B";
 
 const FONT = "Montserrat";
 
-// 13.333in x 7.5in at 16:9.
-const W = 13.333;
-const MARGIN = 0.62;
-const CONTENT_W = W - MARGIN * 2;
-
-const TYPE_LABELS: Record<string, string> = {
-  broadcast: "TV / radio",
-  news: "News",
-  social: "Social",
-  local: "Local news",
-};
+// US Letter portrait.
+const PAGE_W = 8.5;
+const PAGE_H = 11;
+const MARGIN = 0.55;
+const CONTENT_W = PAGE_W - MARGIN * 2;
 
 const LABEL_LABELS: Record<string, string> = {
   confirmed_otb: "Confirmed — Outside the Beltway",
   likely_otb: "Likely — corridor",
   uncertain_i66_segment: "Uncertain segment",
-  related: "Related / parent company",
+  related: "Related / adjacent",
 };
+
+// Known radio outlets, to split "broadcast" into Radio vs TV the way the
+// template reports them. Everything else broadcast is treated as TV.
+const RADIO = /\bwtop\b|\bwamu\b|\bwmal\b|\bnpr\b|radio/i;
+
+const FACILITY_LABELS = new Set(["confirmed_otb", "likely_otb"]);
 
 export type DeckOptions = {
   title: string;
@@ -57,6 +67,21 @@ export type DeckOptions = {
   summary: string;
   featuredIds: string[];
   generatedOn: string;
+  mediaThemes?: string[];
+  socialThemes?: string[];
+  sentimentTrend?: SentimentTrend;
+};
+
+type Derived = {
+  facility: ReportItem[];
+  relevant: ReportItem[];
+  social: ReportItem[];
+  online: number;
+  radio: number;
+  tv: number;
+  facilitySentiment: { positive: number; neutral: number; negative: number };
+  socialSentiment: { positive: number; neutral: number; negative: number };
+  facilityOutlets: string[];
 };
 
 /** Build the deck and return it as a .pptx buffer. */
@@ -65,616 +90,559 @@ export async function buildReportDeck(
   options: DeckOptions,
 ): Promise<Buffer> {
   const pptx = new PptxGenJS();
-  pptx.layout = "LAYOUT_16x9";
+  pptx.defineLayout({ name: "LETTER_PORTRAIT", width: PAGE_W, height: PAGE_H });
+  pptx.layout = "LETTER_PORTRAIT";
   pptx.author = "The Casey Group";
   pptx.company = "The Casey Group";
   pptx.title = options.title;
 
-  addCoverSlide(pptx, report, options);
-  addSnapshotSlide(pptx, report, options);
-  addCoverageMixSlide(pptx, report);
-  addSentimentSlide(pptx, report);
-  addFeaturedSlide(pptx, report, options);
-  addIndexSlides(pptx, report);
+  const d = derive(report);
 
-  // `write` returns a Node Buffer under the "nodebuffer" output type.
+  // Pre-compute how many slides each itemised section spans, so the table of
+  // contents can carry real page numbers.
+  const facilityListPages = pageCount(d.facility.length, FACILITY_PER_PAGE);
+  const relevantPages = pageCount(d.relevant.length, RELEVANT_PER_PAGE);
+  const socialPages = pageCount(d.social.length, SOCIAL_PER_PAGE);
+
+  let page = 1;
+  const toc: TocEntry[] = [];
+  page += 1; // cover itself
+  page += 1; // weekly overview divider
+  toc.push({ label: "Number and Sentiment of Mentions", page });
+  page += 1 + facilityListPages; // facility summary + its list
+  toc.push({ label: "Relevant News", page });
+  page += Math.max(relevantPages, 1);
+  toc.push({ label: "Social Media Mentions and Comments", page });
+  page += 1 + socialPages; // social summary + its posts
+  toc.push({ label: "Social Media Screenshots", page });
+
+  addCoverSlide(pptx, report, options, toc);
+  addDividerSlide(pptx, "Weekly Overview");
+  addFacilitySummarySlide(pptx, report, options, d);
+  addItemListSlides(pptx, d.facility, FACILITY_PER_PAGE, {
+    kicker: "Number and Sentiment of Mentions",
+    heading: "Broadcast / Published Mentions",
+    showSentiment: true,
+  });
+  addItemListSlides(pptx, d.relevant, RELEVANT_PER_PAGE, {
+    kicker: "Relevant News",
+    heading: "News Potentially Relevant to 66 Express OTB / I-66 EMP",
+    showSentiment: false,
+    emptyNote:
+      "No adjacent or industry news was captured as relevant this period.",
+  });
+  addSocialSummarySlide(pptx, options, d);
+  addItemListSlides(pptx, d.social, SOCIAL_PER_PAGE, {
+    kicker: "Social Media Mentions",
+    heading: "Details of Posts",
+    showSentiment: true,
+    showPlatform: true,
+  });
+  addPlaceholderSlide(pptx);
+
   const data = await pptx.write({ outputType: "nodebuffer" });
   return data as Buffer;
 }
 
+/* ------------------------------ Derive ------------------------------- */
+
+function countSentiment(items: ReportItem[]) {
+  const counts = { positive: 0, neutral: 0, negative: 0 };
+  for (const item of items) {
+    if (item.sentiment && item.sentiment in counts) {
+      counts[item.sentiment as keyof typeof counts]++;
+    }
+  }
+  return counts;
+}
+
+function derive(report: Report): Derived {
+  const news = report.items.filter((item) => item.sourceType !== "social");
+  const facility = news.filter((item) => FACILITY_LABELS.has(item.label));
+  const relevant = news.filter((item) => item.label === "related");
+  const social = report.items.filter((item) => item.sourceType === "social");
+
+  let online = 0;
+  let radio = 0;
+  let tv = 0;
+  for (const item of facility) {
+    if (item.sourceType === "broadcast") {
+      if (RADIO.test(item.source)) radio++;
+      else tv++;
+    } else {
+      online++;
+    }
+  }
+
+  const outletCounts = new Map<string, number>();
+  for (const item of facility) {
+    outletCounts.set(item.source, (outletCounts.get(item.source) ?? 0) + 1);
+  }
+  const facilityOutlets = [...outletCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([source]) => source);
+
+  return {
+    facility,
+    relevant,
+    social,
+    online,
+    radio,
+    tv,
+    facilitySentiment: countSentiment(facility),
+    socialSentiment: countSentiment(social),
+    facilityOutlets,
+  };
+}
+
 /* ------------------------------- Slides ------------------------------- */
+
+type TocEntry = { label: string; page: number };
 
 function addCoverSlide(
   pptx: PptxGenJS,
   report: Report,
   options: DeckOptions,
+  toc: TocEntry[],
 ): void {
   const slide = pptx.addSlide();
   slide.background = { color: NAVY };
-
-  // Diagonal wash approximating the web cover's navy-to-blue gradient.
   slide.addShape("rect", {
     x: 0,
     y: 0,
-    w: W,
-    h: 7.5,
+    w: PAGE_W,
+    h: PAGE_H,
     fill: { type: "solid", color: NAVY_MID, transparency: 45 },
     line: { type: "none" },
-    rotate: 0,
   });
-  // Orange frame rules, top and bottom.
   slide.addShape("rect", {
     x: 0,
     y: 0,
-    w: W,
-    h: 0.1,
+    w: PAGE_W,
+    h: 0.12,
     fill: { color: ORANGE },
     line: { type: "none" },
   });
   slide.addShape("rect", {
     x: 0,
-    y: 7.4,
-    w: W,
-    h: 0.1,
+    y: PAGE_H - 0.12,
+    w: PAGE_W,
+    h: 0.12,
     fill: { color: ORANGE },
     line: { type: "none" },
   });
 
-  slide.addText(options.clientName.toUpperCase(), {
+  slide.addText("EXECUTIVE SUMMARY", {
     x: MARGIN,
-    y: 1.5,
+    y: 1.3,
+    w: CONTENT_W,
+    h: 0.45,
+    fontFace: FONT,
+    fontSize: 24,
+    bold: true,
+    color: "FFFFFF",
+    charSpacing: 1,
+  });
+  slide.addText(options.clientName, {
+    x: MARGIN,
+    y: 1.85,
     w: CONTENT_W,
     h: 0.4,
     fontFace: FONT,
-    fontSize: 14,
-    bold: true,
+    fontSize: 18,
     color: GOLD,
-    charSpacing: 2,
   });
-
-  slide.addText(options.title, {
+  slide.addText("News Media & Social Media Mention / Sentiment Trends", {
     x: MARGIN,
-    y: 2.05,
+    y: 2.3,
     w: CONTENT_W,
-    h: 1.5,
+    h: 0.35,
     fontFace: FONT,
-    fontSize: 44,
+    fontSize: 13,
+    color: "D8E4F4",
+  });
+  slide.addText(`Period: ${report.range.label}`, {
+    x: MARGIN,
+    y: 2.72,
+    w: CONTENT_W,
+    h: 0.35,
+    fontFace: FONT,
+    fontSize: 13,
     bold: true,
     color: "FFFFFF",
   });
 
-  slide.addText(report.range.label, {
+  brandRule(slide, MARGIN, 3.25, "FFFFFF");
+
+  // Table of contents.
+  slide.addText("TABLE OF CONTENTS", {
     x: MARGIN,
-    y: 3.5,
+    y: 3.7,
     w: CONTENT_W,
-    h: 0.5,
+    h: 0.35,
     fontFace: FONT,
-    fontSize: 20,
-    color: "D8E4F4",
+    fontSize: 12,
+    bold: true,
+    color: GOLD,
+    charSpacing: 1,
   });
-
-  brandRule(slide, MARGIN, 4.15);
-
-  slide.addText("Sit Less. Live More.", {
-    x: MARGIN,
-    y: 4.5,
-    w: CONTENT_W,
-    h: 0.45,
-    fontFace: FONT,
-    fontSize: 18,
-    italic: true,
-    color: ORANGE,
-  });
-
-  slide.addText(
-    "EARNED MEDIA  ·  WASHINGTON, DC MARKET  ·  WEB + BROADCAST + SOCIAL",
+  const tocRows: PptxGenJS.TableRow[] = toc.map((entry) => [
     {
-      x: MARGIN,
-      y: 6.35,
-      w: CONTENT_W,
-      h: 0.3,
-      fontFace: FONT,
-      fontSize: 11,
-      bold: true,
-      color: "9FB6D4",
-      charSpacing: 1,
+      text: entry.label,
+      options: { fontFace: FONT, fontSize: 13, color: "FFFFFF" },
     },
-  );
+    {
+      text: String(entry.page),
+      options: {
+        fontFace: FONT,
+        fontSize: 13,
+        color: "D8E4F4",
+        align: "right" as const,
+      },
+    },
+  ]);
+  slide.addTable(tocRows, {
+    x: MARGIN,
+    y: 4.15,
+    w: CONTENT_W,
+    colW: [CONTENT_W - 0.9, 0.9],
+    border: { type: "solid", color: "24466E", pt: 1 },
+    rowH: 0.4,
+    valign: "middle",
+  });
+
   slide.addText(
     `Prepared by The Casey Group  ·  Generated ${options.generatedOn}`,
     {
       x: MARGIN,
-      y: 6.7,
+      y: PAGE_H - 0.8,
       w: CONTENT_W,
       h: 0.3,
       fontFace: FONT,
-      fontSize: 11,
+      fontSize: 10,
       color: "8AA3C4",
     },
   );
 }
 
-function addSnapshotSlide(
+function addDividerSlide(pptx: PptxGenJS, title: string): void {
+  const slide = pptx.addSlide();
+  slide.background = { color: BLUE };
+  slide.addText(title.toUpperCase(), {
+    x: MARGIN,
+    y: PAGE_H / 2 - 0.6,
+    w: CONTENT_W,
+    h: 1.0,
+    align: "center",
+    fontFace: FONT,
+    fontSize: 30,
+    bold: true,
+    color: "FFFFFF",
+    charSpacing: 2,
+  });
+  brandRuleCentered(slide, PAGE_H / 2 + 0.45);
+}
+
+function addFacilitySummarySlide(
   pptx: PptxGenJS,
   report: Report,
   options: DeckOptions,
+  d: Derived,
 ): void {
   const slide = contentSlide(
     pptx,
-    "Executive snapshot",
-    "What are the key results?",
+    "Number and Sentiment of Mentions",
+    "Mentions of Our Facility",
   );
 
-  const broadcast =
-    report.byType.find((type) => type.type === "broadcast")?.count ?? 0;
-  const metrics = [
-    { label: "Earned mentions", value: report.totalMentions },
-    { label: "Unique publishers", value: report.uniqueOutlets },
-    { label: "Broadcast mentions", value: broadcast },
-    { label: "Priority mentions", value: report.importantCount },
-  ];
+  let y = 1.75;
 
-  const cardW = (CONTENT_W - 0.3 * 3) / 4;
-  metrics.forEach((metric, index) => {
-    const x = MARGIN + index * (cardW + 0.3);
-    slide.addShape("roundRect", {
-      x,
-      y: 1.95,
-      w: cardW,
-      h: 1.5,
-      fill: { color: PANEL },
-      line: { color: WARM_GRAY, width: 1 },
-      rectRadius: 0.12,
-    });
-    slide.addText(String(metric.value), {
-      x,
-      y: 2.1,
-      w: cardW,
-      h: 0.75,
-      align: "center",
-      fontFace: FONT,
-      fontSize: 40,
-      bold: true,
-      color: BLUE,
-    });
-    slide.addText(metric.label.toUpperCase(), {
-      x,
-      y: 2.85,
-      w: cardW,
-      h: 0.4,
-      align: "center",
-      fontFace: FONT,
-      fontSize: 10,
-      bold: true,
-      color: MUTED,
-      charSpacing: 1,
-    });
-  });
-
-  slide.addShape("roundRect", {
-    x: MARGIN,
-    y: 3.7,
-    w: CONTENT_W,
-    h: 2.9,
-    fill: { color: PANEL },
-    line: { color: WARM_GRAY, width: 1 },
-    rectRadius: 0.12,
-  });
-  slide.addText("SUMMARY", {
-    x: MARGIN + 0.3,
-    y: 3.9,
-    w: CONTENT_W - 0.6,
-    h: 0.3,
-    fontFace: FONT,
-    fontSize: 10,
-    bold: true,
-    color: BLUE,
-    charSpacing: 1,
-  });
-  slide.addText(options.summary, {
-    x: MARGIN + 0.3,
-    y: 4.25,
-    w: CONTENT_W - 0.6,
-    h: 2.1,
-    fontFace: FONT,
-    fontSize: 14,
-    color: INK,
-    lineSpacingMultiple: 1.3,
-    valign: "top",
-  });
-}
-
-function addCoverageMixSlide(pptx: PptxGenJS, report: Report): void {
-  const slide = contentSlide(
-    pptx,
-    "Coverage mix",
-    "How does earned media break down?",
-  );
-
-  const colW = (CONTENT_W - 0.4) / 2;
-
-  panel(slide, MARGIN, 1.95, colW, 2.15, "Media type");
-  mixBars(
+  y = labelledCounts(
     slide,
-    report.byType.map(({ type, count }) => ({
-      label: TYPE_LABELS[type] ?? type,
-      count,
-    })),
-    report.totalMentions,
-    MARGIN + 0.25,
-    2.45,
-    colW - 0.5,
+    y,
+    "Media Mentions of Our Facility This Period",
+    [
+      { label: "Online / Print", value: d.online },
+      { label: "Radio", value: d.radio },
+      { label: "TV", value: d.tv },
+    ],
+    BLUE,
   );
 
-  panel(slide, MARGIN, 4.3, colW, 2.3, "Relevance mix");
-  mixBars(
+  y = labelledCounts(
     slide,
-    report.byLabel.map(({ label, count }) => ({
-      label: LABEL_LABELS[label] ?? label,
-      count,
-    })),
-    report.totalMentions,
-    MARGIN + 0.25,
-    4.8,
-    colW - 0.5,
+    y,
+    "Sentiment Regarding Our Facility",
+    [
+      { label: "Negative", value: d.facilitySentiment.negative, color: NEGATIVE },
+      { label: "Neutral", value: d.facilitySentiment.neutral, color: NEUTRAL },
+      { label: "Positive", value: d.facilitySentiment.positive, color: POSITIVE },
+    ],
+    INK,
   );
 
-  const rightX = MARGIN + colW + 0.4;
-  panel(slide, rightX, 1.95, colW, 4.65, "Top publishers");
-  if (report.topOutlets.length) {
-    const rows: PptxGenJS.TableRow[] = report.topOutlets
-      .slice(0, 10)
-      .map(({ source, count }) => [
-        {
-          text: source,
-          options: { fontFace: FONT, fontSize: 11, color: INK, bold: true },
-        },
-        {
-          text: String(count),
-          options: {
-            fontFace: FONT,
-            fontSize: 11,
-            color: BLUE,
-            bold: true,
-            align: "right" as const,
-          },
-        },
-      ]);
-    slide.addTable(rows, {
-      x: rightX + 0.25,
-      y: 2.45,
-      w: colW - 0.5,
-      colW: [colW - 1.2, 0.7],
-      border: { type: "solid", color: "EDEAE7", pt: 1 },
-      rowH: 0.32,
-      valign: "middle",
+  y = labelledList(
+    slide,
+    y,
+    "Popular Topics",
+    options.mediaThemes?.length ? options.mediaThemes : ["—"],
+  );
+
+  y = labelledList(
+    slide,
+    y,
+    "Prominent Outlets",
+    d.facilityOutlets.length ? d.facilityOutlets : ["—"],
+  );
+
+  // Executive summary paragraph, if the analyst wrote one.
+  if (options.summary.trim()) {
+    panel(slide, MARGIN, y + 0.1, CONTENT_W, 1.6, "Summary");
+    slide.addText(options.summary, {
+      x: MARGIN + 0.25,
+      y: y + 0.55,
+      w: CONTENT_W - 0.5,
+      h: 1.05,
+      fontFace: FONT,
+      fontSize: 11,
+      color: INK,
+      valign: "top",
+      lineSpacingMultiple: 1.25,
     });
-  } else {
-    emptyNote(slide, rightX + 0.25, 2.5, colW - 0.5, "No publishers recorded.");
   }
 }
 
-function addSentimentSlide(pptx: PptxGenJS, report: Report): void {
+function addSocialSummarySlide(
+  pptx: PptxGenJS,
+  options: DeckOptions,
+  d: Derived,
+): void {
   const slide = contentSlide(
     pptx,
-    "Sentiment",
-    "How did coverage reflect on the 66 Express?",
+    "Social Media Mentions and Comments",
+    "Social Media Mentions",
   );
-  const mix = report.sentiment;
 
-  if (mix.scored === 0) {
-    emptyNote(
-      slide,
-      MARGIN,
-      2.6,
-      CONTENT_W,
-      "No coverage was scored for sentiment in this period.",
-    );
-    return;
-  }
+  let y = 1.75;
 
-  slide.addText(mix.net! > 0 ? `+${mix.net}` : String(mix.net), {
+  slide.addText("Posts Mentioning Our Facility This Period", {
     x: MARGIN,
-    y: 2.0,
-    w: 3.0,
-    h: 1.2,
+    y,
+    w: CONTENT_W * 0.7,
+    h: 0.4,
     fontFace: FONT,
-    fontSize: 60,
+    fontSize: 13,
     bold: true,
     color: BLUE,
   });
-  slide.addText("NET SENTIMENT", {
-    x: MARGIN,
-    y: 3.1,
-    w: 3.0,
-    h: 0.3,
+  slide.addText(String(d.social.length), {
+    x: MARGIN + CONTENT_W * 0.7,
+    y: y - 0.1,
+    w: CONTENT_W * 0.3,
+    h: 0.6,
+    align: "right",
     fontFace: FONT,
-    fontSize: 11,
+    fontSize: 30,
     bold: true,
-    color: MUTED,
-    charSpacing: 1,
+    color: BLUE,
   });
+  y += 0.7;
 
+  y = labelledCounts(
+    slide,
+    y,
+    "Sentiment (per TCG analysis)",
+    [
+      { label: "Negative", value: d.socialSentiment.negative, color: NEGATIVE },
+      { label: "Neutral", value: d.socialSentiment.neutral, color: NEUTRAL },
+      { label: "Positive", value: d.socialSentiment.positive, color: POSITIVE },
+    ],
+    INK,
+  );
+
+  const trend = options.sentimentTrend;
+  const trendText = trend
+    ? trend.detail
+      ? `${trend.label} (${trend.detail})`
+      : trend.label
+    : "—";
   slide.addText(
     [
       {
-        text: `${mix.scored} of ${mix.scored + mix.unscored} mentions scored`,
-        options: { breakLine: true },
+        text: "Sentiment Trend (vs. previous period):  ",
+        options: { bold: true, color: BLUE },
       },
-      ...(mix.adjusted > 0
-        ? [{ text: `${mix.adjusted} adjusted by an analyst` }]
-        : []),
+      { text: trendText, options: { color: INK } },
     ],
     {
-      x: W - MARGIN - 4.2,
-      y: 2.15,
-      w: 4.2,
-      h: 0.8,
-      align: "right",
-      fontFace: FONT,
-      fontSize: 12,
-      color: MUTED,
-    },
-  );
-
-  // Stacked bar, proportional to scored coverage.
-  const barY = 3.75;
-  const barH = 0.34;
-  const segments = [
-    { label: "Positive", count: mix.positive, color: POSITIVE },
-    { label: "Neutral", count: mix.neutral, color: NEUTRAL },
-    { label: "Negative", count: mix.negative, color: NEGATIVE },
-  ];
-  let cursor = MARGIN;
-  for (const segment of segments) {
-    if (!segment.count) continue;
-    const width = (segment.count / mix.scored) * CONTENT_W;
-    slide.addShape("rect", {
-      x: cursor,
-      y: barY,
-      w: width,
-      h: barH,
-      fill: { color: segment.color },
-      line: { type: "none" },
-    });
-    cursor += width;
-  }
-
-  segments.forEach((segment, index) => {
-    const x = MARGIN + index * (CONTENT_W / 3);
-    slide.addShape("ellipse", {
-      x,
-      y: barY + 0.65,
-      w: 0.16,
-      h: 0.16,
-      fill: { color: segment.color },
-      line: { type: "none" },
-    });
-    slide.addText(
-      `${segment.label}   ${segment.count} · ${Math.round((segment.count / mix.scored) * 100)}%`,
-      {
-        x: x + 0.26,
-        y: barY + 0.57,
-        w: CONTENT_W / 3 - 0.3,
-        h: 0.32,
-        fontFace: FONT,
-        fontSize: 13,
-        color: INK,
-      },
-    );
-  });
-
-  slide.addText(
-    mix.unscored > 0
-      ? `Percentages are of scored coverage. ${mix.unscored} mention${mix.unscored === 1 ? "" : "s"} in this period ${mix.unscored === 1 ? "is" : "are"} not scored — sentiment is assessed for confirmed and likely Outside the Beltway coverage only. Analyst adjustments override the automatic score.`
-      : "Sentiment is assessed for confirmed and likely Outside the Beltway coverage. Analyst adjustments override the automatic score.",
-    {
-      x: MARGIN,
-      y: 5.5,
-      w: CONTENT_W,
-      h: 0.9,
-      fontFace: FONT,
-      fontSize: 10,
-      color: MUTED,
-      lineSpacingMultiple: 1.3,
-    },
-  );
-}
-
-function addFeaturedSlide(
-  pptx: PptxGenJS,
-  report: Report,
-  options: DeckOptions,
-): void {
-  const slide = contentSlide(
-    pptx,
-    "Curated coverage",
-    "Featured mentions",
-  );
-
-  const featuredSet = new Set(options.featuredIds);
-  const featured = report.items.filter((item) => featuredSet.has(item.id));
-
-  if (featured.length === 0) {
-    emptyNote(
-      slide,
-      MARGIN,
-      2.6,
-      CONTENT_W,
-      "No featured stories were selected for this period.",
-    );
-    return;
-  }
-
-  const shown = featured.slice(0, 4);
-  const cardH = 1.05;
-  shown.forEach((item, index) => {
-    const y = 1.95 + index * (cardH + 0.18);
-    slide.addShape("roundRect", {
       x: MARGIN,
       y,
       w: CONTENT_W,
-      h: cardH,
-      fill: { color: PANEL },
-      line: { color: WARM_GRAY, width: 1 },
-      rectRadius: 0.1,
-    });
-    slide.addText(item.title, {
-      x: MARGIN + 0.28,
-      y: y + 0.12,
-      w: CONTENT_W - 0.56,
-      h: 0.42,
+      h: 0.4,
       fontFace: FONT,
-      fontSize: 14,
-      bold: true,
-      color: INK,
-      hyperlink: { url: item.url },
-    });
-    slide.addText(
-      `${item.source}  ·  ${typeLabelOf(item)}  ·  ${formatDate(item)}${
-        item.sentiment ? `  ·  ${sentimentWord(item.sentiment)}` : ""
-      }`,
-      {
-        x: MARGIN + 0.28,
-        y: y + 0.55,
-        w: CONTENT_W - 0.56,
-        h: 0.34,
-        fontFace: FONT,
-        fontSize: 11,
-        color: MUTED,
-      },
-    );
-  });
+      fontSize: 13,
+    },
+  );
+  y += 0.55;
 
-  if (featured.length > shown.length) {
-    slide.addText(
-      `+ ${featured.length - shown.length} more featured mention${featured.length - shown.length === 1 ? "" : "s"} in the coverage index.`,
-      {
-        x: MARGIN,
-        y: 6.5,
-        w: CONTENT_W,
-        h: 0.3,
-        fontFace: FONT,
-        fontSize: 11,
-        italic: true,
-        color: MUTED,
-      },
-    );
-  }
+  labelledList(
+    slide,
+    y,
+    "Popular Themes of Posts",
+    options.socialThemes?.length ? options.socialThemes : ["—"],
+  );
 }
 
-const INDEX_ROWS_PER_SLIDE = 12;
-const INDEX_MAX_SLIDES = 8;
+type ListOptions = {
+  kicker: string;
+  heading: string;
+  showSentiment: boolean;
+  showPlatform?: boolean;
+  emptyNote?: string;
+};
 
-function addIndexSlides(pptx: PptxGenJS, report: Report): void {
-  if (report.items.length === 0) {
-    const slide = contentSlide(pptx, "Coverage index", "All captured mentions");
+const FACILITY_PER_PAGE = 7;
+const RELEVANT_PER_PAGE = 7;
+const SOCIAL_PER_PAGE = 8;
+
+function addItemListSlides(
+  pptx: PptxGenJS,
+  items: ReportItem[],
+  perPage: number,
+  opts: ListOptions,
+): void {
+  if (items.length === 0) {
+    const slide = contentSlide(pptx, opts.kicker, opts.heading);
     emptyNote(
       slide,
       MARGIN,
-      2.6,
+      2.0,
       CONTENT_W,
-      "No mentions were captured in this period.",
+      opts.emptyNote ?? "No items captured in this period.",
     );
     return;
   }
 
-  const capacity = INDEX_ROWS_PER_SLIDE * INDEX_MAX_SLIDES;
-  const included = report.items.slice(0, capacity);
-  const omitted = report.items.length - included.length;
-  const pageCount = Math.ceil(included.length / INDEX_ROWS_PER_SLIDE);
-
-  for (let page = 0; page < pageCount; page++) {
-    const rows = included.slice(
-      page * INDEX_ROWS_PER_SLIDE,
-      (page + 1) * INDEX_ROWS_PER_SLIDE,
-    );
+  const pages = pageCount(items.length, perPage);
+  for (let p = 0; p < pages; p++) {
+    const slice = items.slice(p * perPage, (p + 1) * perPage);
     const slide = contentSlide(
       pptx,
-      "Coverage index",
-      pageCount > 1
-        ? `All captured mentions (${page + 1} of ${pageCount})`
-        : "All captured mentions",
+      opts.kicker,
+      pages > 1 ? `${opts.heading} (${p + 1} of ${pages})` : opts.heading,
     );
 
-    const header: PptxGenJS.TableRow = [
-      "Date",
-      "Mention",
-      "Publisher",
-      "Type",
-      "Sentiment",
-    ].map((text) => ({
-      text,
-      options: {
-        fontFace: FONT,
-        fontSize: 10,
-        bold: true,
-        color: "FFFFFF",
-        fill: { color: BLUE },
-        align: "left" as const,
-      },
-    }));
-
-    const body: PptxGenJS.TableRow[] = rows.map((item) => [
-      {
-        text: formatDate(item),
-        options: { fontFace: FONT, fontSize: 10, color: MUTED },
-      },
-      {
-        text: item.title,
-        options: {
-          fontFace: FONT,
-          fontSize: 10,
-          color: INK,
-          hyperlink: { url: item.url },
-        },
-      },
-      {
-        text: item.source,
-        options: { fontFace: FONT, fontSize: 10, color: INK },
-      },
-      {
-        text: typeLabelOf(item),
-        options: { fontFace: FONT, fontSize: 10, color: MUTED },
-      },
-      {
-        text: item.sentiment ? sentimentWord(item.sentiment) : "—",
-        options: {
-          fontFace: FONT,
-          fontSize: 10,
-          color: item.sentiment ? sentimentColor(item.sentiment) : MUTED,
-          bold: Boolean(item.sentiment),
-        },
-      },
-    ]);
-
-    slide.addTable([header, ...body], {
-      x: MARGIN,
-      y: 1.95,
-      w: CONTENT_W,
-      colW: [1.15, 5.5, 2.5, 1.35, 1.6],
-      border: { type: "solid", color: "E6E3E0", pt: 1 },
-      rowH: 0.34,
-      valign: "middle",
-      autoPage: false,
-    });
-
-    if (page === pageCount - 1 && omitted > 0) {
-      slide.addText(
-        `${omitted} further mention${omitted === 1 ? "" : "s"} captured in this period ${omitted === 1 ? "is" : "are"} not listed here — the full set is in the CSV export.`,
-        {
-          x: MARGIN,
-          y: 6.55,
-          w: CONTENT_W,
-          h: 0.35,
-          fontFace: FONT,
-          fontSize: 10,
-          italic: true,
-          color: MUTED,
-        },
-      );
+    let y = 1.8;
+    const rowH = (PAGE_H - y - MARGIN) / perPage;
+    for (const item of slice) {
+      renderItemRow(slide, item, y, rowH, opts);
+      y += rowH;
     }
   }
+}
+
+function renderItemRow(
+  slide: PptxGenJS.Slide,
+  item: ReportItem,
+  y: number,
+  rowH: number,
+  opts: ListOptions,
+): void {
+  slide.addShape("line", {
+    x: MARGIN,
+    y: y + rowH - 0.04,
+    w: CONTENT_W,
+    h: 0,
+    line: { color: "E6E3E0", width: 1 },
+  });
+
+  const meta = [formatDate(item), item.source]
+    .filter(Boolean)
+    .join("  ·  ");
+  slide.addText(meta, {
+    x: MARGIN,
+    y: y + 0.04,
+    w: CONTENT_W,
+    h: 0.24,
+    fontFace: FONT,
+    fontSize: 9,
+    bold: true,
+    color: MUTED,
+  });
+
+  slide.addText(item.title, {
+    x: MARGIN,
+    y: y + 0.28,
+    w: CONTENT_W,
+    h: rowH - 0.55,
+    fontFace: FONT,
+    fontSize: 11,
+    bold: true,
+    color: BLUE,
+    valign: "top",
+    hyperlink: { url: item.url },
+  });
+
+  const tags: string[] = [];
+  if (opts.showPlatform) tags.push(socialPlatform(item.url));
+  if (opts.showSentiment && item.sentiment) {
+    tags.push(sentimentWord(item.sentiment));
+  }
+  if (tags.length) {
+    slide.addText(tags.join("   ·   "), {
+      x: MARGIN,
+      y: y + rowH - 0.28,
+      w: CONTENT_W,
+      h: 0.22,
+      fontFace: FONT,
+      fontSize: 9,
+      bold: true,
+      color:
+        opts.showSentiment && item.sentiment
+          ? sentimentColor(item.sentiment)
+          : MUTED,
+    });
+  }
+}
+
+function addPlaceholderSlide(pptx: PptxGenJS): void {
+  const slide = contentSlide(
+    pptx,
+    "Social Media Screenshots",
+    "Comments & Screenshots",
+  );
+  slide.addShape("roundRect", {
+    x: MARGIN,
+    y: 2.2,
+    w: CONTENT_W,
+    h: PAGE_H - 2.2 - MARGIN,
+    fill: { color: PANEL },
+    line: { color: WARM_GRAY, width: 1, dashType: "dash" },
+    rectRadius: 0.12,
+  });
+  slide.addText(
+    [
+      {
+        text: "Analyst section",
+        options: { bold: true, fontSize: 14, color: BLUE, breakLine: true },
+      },
+      {
+        text: "\nThe comment-category breakdown and post screenshots are added here by hand. Automated comment capture and screenshotting are on the roadmap, not yet in this deck.",
+        options: { fontSize: 12, color: MUTED },
+      },
+    ],
+    {
+      x: MARGIN + 0.4,
+      y: 2.6,
+      w: CONTENT_W - 0.8,
+      h: 1.6,
+      fontFace: FONT,
+      align: "center",
+      valign: "top",
+      lineSpacingMultiple: 1.3,
+    },
+  );
 }
 
 /* ------------------------------ Helpers ------------------------------- */
@@ -686,52 +654,101 @@ function contentSlide(
 ): PptxGenJS.Slide {
   const slide = pptx.addSlide();
   slide.background = { color: CANVAS };
-
   slide.addText(kicker.toUpperCase(), {
     x: MARGIN,
-    y: 0.5,
+    y: 0.45,
     w: CONTENT_W,
     h: 0.3,
     fontFace: FONT,
-    fontSize: 11,
+    fontSize: 10,
     bold: true,
     color: ORANGE,
     charSpacing: 2,
   });
   slide.addText(heading.toUpperCase(), {
     x: MARGIN,
-    y: 0.82,
+    y: 0.75,
     w: CONTENT_W,
     h: 0.55,
     fontFace: FONT,
-    fontSize: 26,
+    fontSize: 22,
     bold: true,
     color: BLUE,
   });
-  brandRule(slide, MARGIN, 1.5);
+  brandRule(slide, MARGIN, 1.42, ORANGE);
   return slide;
 }
 
-/** The brand's dashed orange rule: one long bar, a dot, a short bar. */
-function brandRule(slide: PptxGenJS.Slide, x: number, y: number): void {
-  const segments = [
-    { w: 1.85, gap: 0.1 },
-    { w: 0.17, gap: 0.1 },
-    { w: 0.66, gap: 0 },
-  ];
-  let cursor = x;
-  for (const segment of segments) {
-    slide.addShape("roundRect", {
-      x: cursor,
-      y,
-      w: segment.w,
-      h: 0.07,
-      fill: { color: ORANGE },
-      line: { type: "none" },
-      rectRadius: 0.035,
+/** A bold label with a row of "Name: value" counts; returns the next y. */
+function labelledCounts(
+  slide: PptxGenJS.Slide,
+  y: number,
+  label: string,
+  entries: Array<{ label: string; value: number; color?: string }>,
+  valueColor: string,
+): number {
+  slide.addText(`${label}:`, {
+    x: MARGIN,
+    y,
+    w: CONTENT_W,
+    h: 0.32,
+    fontFace: FONT,
+    fontSize: 13,
+    bold: true,
+    color: BLUE,
+  });
+  const runs: PptxGenJS.TextProps[] = [];
+  entries.forEach((entry, index) => {
+    runs.push({
+      text: `${entry.label}: `,
+      options: { color: entry.color ?? MUTED, bold: true },
     });
-    cursor += segment.w + segment.gap;
-  }
+    runs.push({
+      text: String(entry.value),
+      options: { color: entry.color ?? valueColor, bold: true },
+    });
+    if (index < entries.length - 1) {
+      runs.push({ text: "        ", options: { color: MUTED } });
+    }
+  });
+  slide.addText(runs, {
+    x: MARGIN + 0.1,
+    y: y + 0.33,
+    w: CONTENT_W - 0.1,
+    h: 0.32,
+    fontFace: FONT,
+    fontSize: 13,
+  });
+  return y + 0.85;
+}
+
+/** A bold label with a comma-free bulleted phrase list; returns the next y. */
+function labelledList(
+  slide: PptxGenJS.Slide,
+  y: number,
+  label: string,
+  values: string[],
+): number {
+  slide.addText(`${label}:`, {
+    x: MARGIN,
+    y,
+    w: CONTENT_W,
+    h: 0.32,
+    fontFace: FONT,
+    fontSize: 13,
+    bold: true,
+    color: BLUE,
+  });
+  slide.addText(values.join("     •     "), {
+    x: MARGIN + 0.1,
+    y: y + 0.33,
+    w: CONTENT_W - 0.1,
+    h: 0.32,
+    fontFace: FONT,
+    fontSize: 12,
+    color: INK,
+  });
+  return y + 0.8;
 }
 
 function panel(
@@ -749,11 +766,11 @@ function panel(
     h,
     fill: { color: PANEL },
     line: { color: WARM_GRAY, width: 1 },
-    rectRadius: 0.12,
+    rectRadius: 0.1,
   });
   slide.addText(title.toUpperCase(), {
     x: x + 0.25,
-    y: y + 0.16,
+    y: y + 0.14,
     w: w - 0.5,
     h: 0.3,
     fontFace: FONT,
@@ -764,62 +781,31 @@ function panel(
   });
 }
 
-function mixBars(
-  slide: PptxGenJS.Slide,
-  rows: Array<{ label: string; count: number }>,
-  total: number,
-  x: number,
-  y: number,
-  w: number,
-): void {
-  if (rows.length === 0) {
-    emptyNote(slide, x, y, w, "No mentions in this period.");
-    return;
-  }
-  rows.slice(0, 4).forEach((row, index) => {
-    const rowY = y + index * 0.42;
-    const percent = total ? Math.round((row.count / total) * 100) : 0;
-    slide.addText(row.label, {
-      x,
-      y: rowY,
-      w: w * 0.62,
-      h: 0.24,
-      fontFace: FONT,
-      fontSize: 11,
-      bold: true,
-      color: INK,
-    });
-    slide.addText(`${row.count} · ${percent}%`, {
-      x: x + w * 0.62,
-      y: rowY,
-      w: w * 0.38,
-      h: 0.24,
-      align: "right",
-      fontFace: FONT,
-      fontSize: 11,
-      color: MUTED,
-    });
+/** The brand's dashed orange rule: one long bar, a dot, a short bar. */
+function brandRule(slide: PptxGenJS.Slide, x: number, y: number, color: string): void {
+  const segments = [
+    { w: 1.6, gap: 0.09 },
+    { w: 0.15, gap: 0.09 },
+    { w: 0.58, gap: 0 },
+  ];
+  let cursor = x;
+  for (const segment of segments) {
     slide.addShape("roundRect", {
-      x,
-      y: rowY + 0.25,
-      w,
-      h: 0.1,
-      fill: { color: "E4E1DE" },
+      x: cursor,
+      y,
+      w: segment.w,
+      h: 0.06,
+      fill: { color },
       line: { type: "none" },
-      rectRadius: 0.05,
+      rectRadius: 0.03,
     });
-    if (percent > 0) {
-      slide.addShape("roundRect", {
-        x,
-        y: rowY + 0.25,
-        w: Math.max(w * (percent / 100), 0.08),
-        h: 0.1,
-        fill: { color: BLUE },
-        line: { type: "none" },
-        rectRadius: 0.05,
-      });
-    }
-  });
+    cursor += segment.w + segment.gap;
+  }
+}
+
+function brandRuleCentered(slide: PptxGenJS.Slide, y: number): void {
+  const total = 1.6 + 0.09 + 0.15 + 0.09 + 0.58;
+  brandRule(slide, (PAGE_W - total) / 2, y, ORANGE);
 }
 
 function emptyNote(
@@ -841,18 +827,14 @@ function emptyNote(
   });
 }
 
-function typeLabelOf(item: ReportItem): string {
-  if (item.sourceType === "social") {
-    return socialPlatform(item.url);
-  }
-  return TYPE_LABELS[item.sourceType] ?? item.sourceType;
+function pageCount(total: number, perPage: number): number {
+  return Math.max(1, Math.ceil(total / perPage));
 }
 
 function formatDate(item: ReportItem): string {
-  if (!item.publishedAt) {
-    return "—";
-  }
+  if (!item.publishedAt) return "";
   return new Date(item.publishedAt).toLocaleDateString("en-US", {
+    weekday: "short",
     month: "short",
     day: "numeric",
     timeZone: "America/New_York",

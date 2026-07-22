@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { isDriveConfigured, uploadDeckToDrive } from "@/lib/google-drive";
-import { getReport, resolveReportRange, type ReportParams } from "@/lib/report";
+import {
+  getReport,
+  previousRange,
+  resolveReportRange,
+  type ReportParams,
+} from "@/lib/report";
+import {
+  describeSentimentTrend,
+  extractThemes,
+} from "@/lib/report-insights";
 import { buildReportDeck } from "@/lib/slides-deck";
 
 /**
@@ -51,7 +60,19 @@ export async function POST(request: Request) {
 
   const params = (body.params ?? {}) as ReportParams;
   const range = resolveReportRange(params);
-  const report = await getReport(range, typeof params.q === "string" ? params.q : "");
+  const q = typeof params.q === "string" ? params.q : "";
+  const report = await getReport(range, q);
+
+  // The prior period (for the sentiment trend line) and the week's themes are
+  // only needed for the deck, so they're computed here rather than in getReport.
+  const priorReport = await getReport(previousRange(range), q);
+  const newsItems = report.items.filter((i) => i.sourceType !== "social");
+  const socialItems = report.items.filter((i) => i.sourceType === "social");
+  const [mediaThemes, socialThemes] = await Promise.all([
+    extractThemes(newsItems, "media"),
+    extractThemes(socialItems, "social"),
+  ]);
+  const sentimentTrend = describeSentimentTrend(report, priorReport);
 
   const title = clean(body.title, MAX_TEXT, "Earned Media Report");
   const options = {
@@ -77,6 +98,9 @@ export async function POST(request: Request) {
         timeZone: "America/New_York",
       }),
     ),
+    mediaThemes,
+    socialThemes,
+    sentimentTrend,
   };
 
   let deck: Buffer;

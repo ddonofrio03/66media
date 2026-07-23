@@ -83,9 +83,7 @@ export async function collectDigestItems(
     // Direct outlet feeds run first so a station's own article wins dedup over
     // a search-engine copy and keeps its broadcast classification.
     { name: "Media Feeds", run: () => collectFeedItems(MEDIA_FEEDS) },
-    { name: "GDELT", run: () => collectGdeltArticles(exactQueries) },
     { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
-    { name: "Bing News", run: () => collectBingNewsItems(exactQueries) },
     { name: "Reddit", run: () => collectRedditItems(exactQueries) },
     // Free/cheap social sources run on EVERY collection (poller included):
     // Bluesky is free (gated on its login env vars, silent [] otherwise) and
@@ -159,49 +157,6 @@ export async function collectDigestItems(
   };
 }
 
-async function collectGdeltArticles(exactQueries: string[]): Promise<RawItem[]> {
-  if (exactQueries.length === 0) {
-    return [];
-  }
-  // GDELT is a best-effort bonus source. It rate-limits to ~1 request / 5s per
-  // IP (Vercel shares IPs across projects, so 429s are common), is often slow,
-  // and frequently returns no I-66 coverage at all. Any failure — 429, timeout,
-  // non-JSON notice — degrades to an empty result and never flags as degraded;
-  // the reliable backbone is Google News + Bing News + Reddit.
-  try {
-    const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
-    url.searchParams.set("query", `(${exactQueries.join(" OR ")})`);
-    url.searchParams.set("mode", "artlist");
-    url.searchParams.set("format", "json");
-    url.searchParams.set("maxrecords", "25");
-    url.searchParams.set("sort", "datedesc");
-    url.searchParams.set("timespan", "2d");
-
-    const response = await fetchWithTimeout(url);
-    if (!response.ok) {
-      console.warn(`[collectors] GDELT skipped (HTTP ${response.status})`);
-      return [];
-    }
-
-    const data = JSON.parse(await response.text()) as {
-      articles?: GdeltArticle[];
-    };
-    return (data.articles ?? []).map((article) => ({
-      title: article.title ?? "Untitled article",
-      source: article.domain ?? "GDELT",
-      url: article.url ?? "",
-      sourceType: "news",
-      snippet: article.title ?? "",
-      publishedAt: parseGdeltDate(article.seendate),
-      provider: "GDELT",
-      domain: article.domain,
-    }));
-  } catch (error) {
-    console.warn("[collectors] GDELT skipped:", error);
-    return [];
-  }
-}
-
 async function collectGoogleNewsItems(queries: string[]): Promise<RawItem[]> {
   if (queries.length === 0) {
     return [];
@@ -233,40 +188,6 @@ async function collectGoogleNewsQuery(query: string): Promise<RawItem[]> {
     snippet: item.description || item.title,
     publishedAt: parseDate(item.pubDate),
     provider: "Google News",
-  }));
-}
-
-async function collectBingNewsItems(exactQueries: string[]): Promise<RawItem[]> {
-  // A second, independent news feed so coverage does not depend on Google News
-  // alone. Bing's news RSS works server-side without an API key.
-  const queries = exactQueries.length
-    ? [exactQueries.join(" OR "), BROAD_NEWS_QUERY]
-    : [BROAD_NEWS_QUERY];
-  const results = await Promise.allSettled(
-    queries.map((query) => collectBingNewsQuery(query)),
-  );
-
-  if (results.every((result) => result.status === "rejected")) {
-    throw new Error("All Bing News queries failed");
-  }
-
-  return results.flatMap(unwrapSettled);
-}
-
-async function collectBingNewsQuery(query: string): Promise<RawItem[]> {
-  const url = new URL("https://www.bing.com/news/search");
-  url.searchParams.set("q", query);
-  url.searchParams.set("format", "rss");
-
-  const xml = await fetchText(url);
-  return parseRssItems(xml).map((item) => ({
-    title: item.title || "Untitled article",
-    source: item.source || "Bing News",
-    url: item.link,
-    sourceType: "news",
-    snippet: item.description || item.title,
-    publishedAt: parseDate(item.pubDate),
-    provider: "Bing News",
   }));
 }
 
@@ -559,7 +480,7 @@ function dedupeRawItems(items: RawItem[]) {
   for (const item of items) {
     const key = createStableId(item.url, item.title);
     // The title key is scoped to the outlet so the SAME article pulled by
-    // multiple providers (Google News / Bing / direct feed) collapses to one,
+    // multiple providers (Google News / direct feed / social) collapses to one,
     // but the SAME headline from DIFFERENT outlets (syndicated press releases,
     // wire copy) is kept as separate links — each is a real, distinct mention.
     const titleKey = canonicalTitleKey(item);
@@ -592,6 +513,8 @@ function canonicalTitleKey(item: RawItem) {
  */
 function outletKey(item: RawItem) {
   const source = normalizeText(item.source);
+  // "bing news" is no longer collected, but archived rows still carry it as
+  // their source, so it stays in the generic-provider list.
   if (source && source !== "google news" && source !== "bing news") {
     return source;
   }
@@ -736,24 +659,6 @@ function decodeXml(value: string) {
     .trim();
 }
 
-function parseGdeltDate(value?: string) {
-  if (!value) {
-    return new Date().toISOString();
-  }
-
-  if (/^\d{14}$/.test(value)) {
-    const year = Number(value.slice(0, 4));
-    const month = Number(value.slice(4, 6)) - 1;
-    const day = Number(value.slice(6, 8));
-    const hour = Number(value.slice(8, 10));
-    const minute = Number(value.slice(10, 12));
-    const second = Number(value.slice(12, 14));
-    return new Date(Date.UTC(year, month, day, hour, minute, second)).toISOString();
-  }
-
-  return parseDate(value);
-}
-
 function parseDate(value?: string) {
   const parsed = value ? new Date(value) : new Date();
   if (Number.isNaN(parsed.getTime())) {
@@ -819,13 +724,6 @@ function dateValue(value: string) {
 function unwrapSettled<T>(result: PromiseSettledResult<T[]>): T[] {
   return result.status === "fulfilled" ? result.value : [];
 }
-
-type GdeltArticle = {
-  title?: string;
-  url?: string;
-  seendate?: string;
-  domain?: string;
-};
 
 type RssItem = {
   title: string;

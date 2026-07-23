@@ -1,6 +1,6 @@
 /**
  * Direct RSS / Atom / YouTube feeds for broadcast (TV & radio), transportation
- * agencies, and local outlets. Unlike the search providers (Google/Bing/GDELT),
+ * agencies, and local outlets. Unlike the search providers (Google News),
  * these are pulled straight from the source so coverage does not depend on a
  * search engine indexing the outlet. Every item still runs through the same
  * keyword + I-66 classifier, so a station's full feed is filtered down to only
@@ -51,7 +51,7 @@ export const MEDIA_FEEDS: FeedSource[] = [
   { name: "DC News Now", url: "https://www.dcnewsnow.com/feed/", kind: "rss", medium: "TV", domain: "dcnewsnow.com" },
 
   // Local online outlets with heavy I-66 corridor coverage. Pulled directly so
-  // coverage does not depend on Google/Bing indexing them. All verified live.
+  // coverage does not depend on Google News indexing them. All verified live.
   { name: "Potomac Local", url: "https://potomaclocal.com/feed/", kind: "rss", medium: "Online", domain: "potomaclocal.com" },
   { name: "Inside NoVa", url: "https://www.insidenova.com/search/?f=rss", kind: "rss", medium: "Online", domain: "insidenova.com" },
   { name: "FFXnow", url: "https://ffxnow.com/feed/", kind: "rss", medium: "Online", domain: "ffxnow.com" },

@@ -56,7 +56,7 @@ export type DigestSnapshot = {
   scannedCount?: number;
   offTopicCount?: number;
   noRelevantCoverage: boolean;
-  // Providers (GDELT / Google News / Reddit) that errored on this run, so a
+  // Providers (Google News / Reddit / feeds) that errored on this run, so a
   // silent collection failure is visible instead of looking like "no news".
   degradedProviders: string[];
   // Items shown in this digest that had never been emailed before. Items

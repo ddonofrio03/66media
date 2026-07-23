@@ -67,5 +67,8 @@ export const MEDIA_FEEDS: FeedSource[] = [
   { name: "FOX 5 DC", url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCHLyP4MuA-JAFBCwxXOEDdA", kind: "youtube", medium: "TV", domain: "youtube.com" },
   { name: "7News WJLA", url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCfIjR00qhYUFkbWIugAAbGg", kind: "youtube", medium: "TV", domain: "youtube.com" },
   { name: "WUSA9", url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCcT6w3xUyVshyR2_2vrMp1w", kind: "youtube", medium: "TV", domain: "youtube.com" },
+  // NOTE: the @dcnewsnow handle is a dead 2013 student-journalism channel, NOT
+  // the Nexstar station — resolve this id from search, never from the handle.
+  { name: "DC News Now", url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCP3sSdrcCw7qC0qSrD8xOHQ", kind: "youtube", medium: "TV", domain: "youtube.com" },
   { name: "WTOP", url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCIFD9TMCLBXvJJMe2OpCtCA", kind: "youtube", medium: "Radio", domain: "youtube.com" },
 ];

@@ -213,6 +213,9 @@ export async function getArchiveItems(opts: {
     let query = supabase
       .from("digest_items")
       .select(columns)
+      // News tab is press/broadcast only — social posts live on the /social
+      // tab. Without this, corridor tweets leak into the News list.
+      .neq("source_type", "social")
       .order("published_at", { ascending: false, nullsFirst: false })
       .limit(limit + 1);
     if (opts.since) {

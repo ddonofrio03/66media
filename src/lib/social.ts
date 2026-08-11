@@ -47,7 +47,26 @@ const DEFAULT_FB_PAGES = [
   "https://www.facebook.com/PWCgov",
   "https://www.facebook.com/VirginiaStatePolice",
   "https://www.facebook.com/FairfaxCountyPD",
+  // Proven producers — every one of these generated a mention that made the
+  // 08-07-2026 client report, so they earn their place over guesswork.
+  "https://www.facebook.com/jtechusa",
+  "https://www.facebook.com/towtimesmagazine",
+  "https://www.facebook.com/PrinceWilliamLiving",
+  "https://www.facebook.com/TrafficProBeds",
+  "https://www.facebook.com/PWCCFoundation",
+  "https://www.facebook.com/pinkspacetheory1",
+  "https://www.facebook.com/slugi66",
+  "https://www.facebook.com/SullyDistrict",
 ];
+
+// Public Facebook GROUPS to watch, from FB_GROUPS (comma-separated URLs).
+// Dark until that variable is set — no group URLs, no actor call, no spend.
+//
+// Same structural limit as pages: there is no keyword search, so a group is
+// only visible if it is named here. Private groups (most local commuter groups)
+// are invisible to a cookie-free scraper and cannot be added.
+const FB_GROUPS_ACTOR =
+  process.env.APIFY_FB_GROUPS_ACTOR || "apify/facebook-groups-scraper";
 // LinkedIn has no open keyword search, so we run in "company-page mode": scrape
 // the recent posts of specific pages (LINKEDIN_PAGES) with a cookie-free
 // company-posts actor. No login, ToS-friendly — but only the pages' own posts,
@@ -57,10 +76,20 @@ const LINKEDIN_ACTOR =
 
 // Per-run caps. X is the backbone so it gets the larger share; the combined
 // result is sliced to TOTAL_CAP afterward. Lower these to spend less.
+//
+// TOTAL_CAP must stay comfortably ABOVE the sum of the per-actor caps. Apify
+// bills per result returned, so anything the actors fetch and this cap then
+// discards is money spent on data we never look at.
 const X_MAX_ITEMS = 35;
-const FB_MAX_ITEMS = 20;
+// 23 pages x FB_POSTS_PER_PAGE, with headroom. The busy DC stations post many
+// times a day; at the old 3-per-page/20-total the corridor posts were usually
+// pushed out by weather and sports before we ever saw them.
+const FB_MAX_ITEMS = 150;
+const FB_POSTS_PER_PAGE = 10;
+const FB_POSTS_PER_GROUP = 15;
+const FB_GROUPS_MAX_ITEMS = 60;
 const LINKEDIN_MAX_PER_PAGE = 5;
-const TOTAL_CAP = 50;
+const TOTAL_CAP = 200;
 
 // Broad, recall-oriented X searches run alongside the exact brand phrases. These
 // catch how people actually tweet about the corridor ("the I-66 toll was $40");
@@ -120,6 +149,16 @@ export async function collectSocialItems(
   // the shared classifier. Explicitly opt-in (paid Apify plan required).
   if (process.env.FB_WATCHLIST === "true") {
     tasks.push({ name: "Facebook", run: () => collectFacebookPages(token) });
+  }
+
+  // Public Facebook groups, only when FB_GROUPS names some. Same reasoning as
+  // LinkedIn below: never call a billed actor with nothing to scrape.
+  const groups = facebookGroups();
+  if (groups.length > 0) {
+    tasks.push({
+      name: "Facebook groups",
+      run: () => collectFacebookGroups(groups, token),
+    });
   }
 
   // LinkedIn only runs when pages are configured — no point calling the actor
@@ -200,6 +239,73 @@ async function collectX(keywords: string[], token: string): Promise<RawItem[]> {
   }).filter((item) => item.url);
 }
 
+/** Comma-separated public group URLs from FB_GROUPS. Empty = feature off. */
+function facebookGroups(): string[] {
+  return (process.env.FB_GROUPS || "")
+    .split(",")
+    .map((group) => group.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Recent posts from public Facebook groups. Corridor relevance is decided
+ * downstream by the shared classifier, so a general commuter group is fine.
+ *
+ * Best-effort like the page watchlist: group scrapers are the most fragile
+ * actors on Apify (group layouts change, and a group flipped to private simply
+ * stops returning). A failure here is tolerated rather than failing the run.
+ */
+async function collectFacebookGroups(
+  groups: string[],
+  token: string,
+): Promise<RawItem[]> {
+  const raw = await runActor(
+    FB_GROUPS_ACTOR,
+    {
+      startUrls: groups.map((url) => ({ url })),
+      resultsLimit: FB_POSTS_PER_GROUP,
+    },
+    token,
+    FB_GROUPS_MAX_ITEMS,
+  );
+
+  return raw
+    .map((post) => {
+      const text = str(
+        pick(post, [
+          "text", "message", "content", "postText", "caption", "description",
+        ]),
+      );
+      const group = str(
+        pick(post, ["groupTitle", "groupName", "group.name", "facebookGroup"]),
+      );
+      const author = str(
+        pick(post, ["user.name", "author.name", "authorName", "from.name"]),
+      );
+      const url = str(
+        pick(post, ["url", "postUrl", "link", "facebookUrl", "permalink"]),
+      );
+      return {
+        title: text
+          ? truncate(text, 120)
+          : `Post in ${group || "a Facebook group"}`,
+        // Attribute to the group, not the individual — the group is the
+        // "outlet" for reporting, and it avoids naming private people.
+        source: group || "Facebook group",
+        url,
+        sourceType: "social" as const,
+        snippet: author ? `${author}: ${text}` : text,
+        publishedAt: toIso(
+          pick(post, ["time", "date", "publishedTime", "timestamp", "createdAt"]),
+        ),
+        provider: "Facebook groups (Apify)",
+        domain: "facebook.com",
+        engagement: engagementFrom(post),
+      };
+    })
+    .filter((item) => item.url);
+}
+
 // Comma-separated FB page URLs, falling back to the curated default watchlist.
 function facebookPages(): string[] {
   const fromEnv = (process.env.FB_PAGES || "")
@@ -216,7 +322,7 @@ async function collectFacebookPages(token: string): Promise<RawItem[]> {
   // varies across actor versions — read fields defensively.
   const input = {
     startUrls: facebookPages().map((url) => ({ url })),
-    resultsLimit: 3,
+    resultsLimit: FB_POSTS_PER_PAGE,
   };
 
   const raw = await runActor(FB_ACTOR, input, token, FB_MAX_ITEMS);

@@ -92,6 +92,8 @@ export async function GET(request: Request) {
     apifyActors:
       process.env.SOCIAL_ENABLED === "true" && Boolean(process.env.APIFY_TOKEN),
     fbWatchlist: process.env.FB_WATCHLIST === "true",
+    fbGroups: (process.env.FB_GROUPS || "").split(",").filter((g) => g.trim())
+      .length,
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
     pushover: Boolean(
       process.env.PUSHOVER_APP_TOKEN && process.env.PUSHOVER_USER_KEY,

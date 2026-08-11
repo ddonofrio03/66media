@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getReportCuration } from "@/lib/digest-store";
 import { isDriveConfigured, uploadDeckToDrive } from "@/lib/google-drive";
 import {
   getReport,
@@ -73,6 +74,7 @@ export async function POST(request: Request) {
     extractThemes(socialItems, "social"),
   ]);
   const sentimentTrend = describeSentimentTrend(report, priorReport);
+  const curation = await getReportCuration(range.period, range.key);
 
   const title = clean(body.title, MAX_TEXT, "Earned Media Report");
   const options = {
@@ -101,6 +103,10 @@ export async function POST(request: Request) {
     mediaThemes,
     socialThemes,
     sentimentTrend,
+    // Hand-set dials from the saved curation, so a deck prints the number the
+    // analyst approved on screen rather than recalculating past it.
+    mediaScoreOverride: curation.mediaScore,
+    socialScoreOverride: curation.socialScore,
   };
 
   let deck: Buffer;

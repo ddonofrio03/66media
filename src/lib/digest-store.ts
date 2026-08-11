@@ -322,25 +322,50 @@ export type SentimentValue = "positive" | "neutral" | "negative";
  * sentiment_source='manual', which permanently excludes the row from automatic
  * re-scoring — a human judgment is never silently reverted by a later AI pass.
  */
+/**
+ * Persist an analyst's sentiment call. `score` (0–100) is the fine-grained
+ * form; omit it to store just the bucket. Passing a score also derives the
+ * bucket so the coarse breakdown and the dial can never drift apart.
+ */
 export async function setSentiment(
   id: string,
   sentiment: SentimentValue | null,
+  score?: number | null,
 ): Promise<{ ok: boolean; error?: string }> {
   const supabase = getSupabase();
   if (!supabase) {
     return { ok: false, error: "Supabase is not configured." };
   }
 
-  const { error } = await supabase
+  const payload: Record<string, unknown> = {
+    sentiment,
+    // Clearing drops back to unscored, not back to the AI's guess: the next
+    // scoring pass will pick the story up again.
+    sentiment_source: sentiment ? "manual" : null,
+    sentiment_at: sentiment ? new Date().toISOString() : null,
+  };
+  // A bucket click replaces any hand-typed score; an explicit score wins over
+  // the bucket. Either way the two never disagree about what the dial shows.
+  if (score !== undefined) {
+    payload.sentiment_score = score;
+  } else {
+    payload.sentiment_score = null;
+  }
+
+  let { error } = await supabase
     .from("digest_items")
-    .update({
-      sentiment,
-      // Clearing drops back to unscored, not back to the AI's guess: the next
-      // scoring pass will pick the story up again.
-      sentiment_source: sentiment ? "manual" : null,
-      sentiment_at: sentiment ? new Date().toISOString() : null,
-    })
+    .update(payload)
     .eq("id", id);
+
+  // Pre-migration databases have no sentiment_score column; the bucket still
+  // saves rather than the whole edit failing.
+  if (error && error.message.includes("sentiment_score")) {
+    delete payload.sentiment_score;
+    ({ error } = await supabase
+      .from("digest_items")
+      .update(payload)
+      .eq("id", id));
+  }
 
   if (error) {
     console.error("[digest-store] setSentiment failed:", error.message);
@@ -557,4 +582,103 @@ export async function getLatestStoredSnapshot(): Promise<DigestSnapshot | null> 
   }
 
   return (data?.snapshot as DigestSnapshot | undefined) ?? null;
+}
+
+/* --------------------------- Report curation --------------------------- */
+
+/**
+ * Analyst edits for one report period: the written title/summary, the featured
+ * selection, and any hand-set sentiment dials. Null dials mean "use the
+ * calculated value" — distinct from a dial deliberately set to 0.
+ */
+export type ReportCuration = {
+  title: string | null;
+  clientName: string | null;
+  summary: string | null;
+  featuredIds: string[];
+  mediaScore: number | null;
+  socialScore: number | null;
+};
+
+const EMPTY_CURATION: ReportCuration = {
+  title: null,
+  clientName: null,
+  summary: null,
+  featuredIds: [],
+  mediaScore: null,
+  socialScore: null,
+};
+
+export async function getReportCuration(
+  period: string,
+  rangeKey: string,
+): Promise<ReportCuration> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return EMPTY_CURATION;
+  }
+
+  const { data, error } = await supabase
+    .from("report_curation")
+    .select("title, client_name, summary, featured_ids, media_score, social_score")
+    .eq("period", period)
+    .eq("range_key", rangeKey)
+    .maybeSingle();
+
+  if (error || !data) {
+    if (error && !error.message.includes("report_curation")) {
+      console.error("[digest-store] getReportCuration failed:", error.message);
+    }
+    return EMPTY_CURATION;
+  }
+
+  const row = data as Record<string, unknown>;
+  const num = (value: unknown) =>
+    value === null || value === undefined ? null : Number(value);
+  return {
+    title: (row.title as string | null) ?? null,
+    clientName: (row.client_name as string | null) ?? null,
+    summary: (row.summary as string | null) ?? null,
+    featuredIds: (row.featured_ids as string[] | null) ?? [],
+    mediaScore: num(row.media_score),
+    socialScore: num(row.social_score),
+  };
+}
+
+export async function saveReportCuration(
+  period: string,
+  rangeKey: string,
+  curation: Partial<ReportCuration>,
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  // Only the provided keys are written, so saving a dial never clobbers the
+  // summary someone else is mid-way through editing.
+  const row: Record<string, unknown> = {
+    period,
+    range_key: rangeKey,
+    updated_at: new Date().toISOString(),
+  };
+  if (curation.title !== undefined) row.title = curation.title;
+  if (curation.clientName !== undefined) row.client_name = curation.clientName;
+  if (curation.summary !== undefined) row.summary = curation.summary;
+  if (curation.featuredIds !== undefined) row.featured_ids = curation.featuredIds;
+  if (curation.mediaScore !== undefined) row.media_score = curation.mediaScore;
+  if (curation.socialScore !== undefined) row.social_score = curation.socialScore;
+
+  const { error } = await supabase
+    .from("report_curation")
+    .upsert(row, { onConflict: "period,range_key" });
+
+  if (error) {
+    console.error("[digest-store] saveReportCuration failed:", error.message);
+    const hint = error.message.includes("report_curation")
+      ? " (has the report_curation migration been run in the Supabase SQL editor?)"
+      : "";
+    return { ok: false, error: `${error.message}${hint}` };
+  }
+  return { ok: true };
 }

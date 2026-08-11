@@ -37,6 +37,8 @@ export type ReportItem = {
   feedback: string | null;
   sentiment: string | null;
   sentimentSource: string | null;
+  /** Analyst's 0–100 score. Null = fall back to the bucket. */
+  sentimentScore: number | null;
   /** Why the classifier kept this story — the deck's "Relevance:" line. */
   reason: string;
   /** Reporter credit, when the feed supplied one. */
@@ -90,6 +92,28 @@ export function sentimentBand(score: number | null): string {
   return "Negative";
 }
 
+/** The 0–100 value each bucket stands for. */
+const BUCKET_SCORE: Record<string, number> = {
+  positive: 100,
+  neutral: 50,
+  negative: 0,
+};
+
+/**
+ * An item's sentiment on the 0–100 scale: its hand-set score when an analyst
+ * gave one, otherwise the value its bucket stands for. Null when unscored.
+ *
+ * Averaging this over scored items reproduces the bucket-only formula exactly
+ * — (100p + 50u + 0n)/s is algebraically 50 + 50(p−n)/s — so per-item scores
+ * generalise the dial without moving it for coverage nobody has hand-scored.
+ */
+export function effectiveScore(item: ReportItem): number | null {
+  if (item.sentimentScore !== null) {
+    return item.sentimentScore;
+  }
+  return item.sentiment ? (BUCKET_SCORE[item.sentiment] ?? null) : null;
+}
+
 /**
  * Sentiment mix over a set of items. `scored` is the denominator — unscored
  * items are excluded rather than counted as neutral, so the dial never
@@ -98,24 +122,42 @@ export function sentimentBand(score: number | null): string {
 export function sentimentOf(items: ReportItem[]): SentimentMix {
   const counts = { positive: 0, neutral: 0, negative: 0 };
   let adjusted = 0;
+  let total = 0;
+  let scored = 0;
+
   for (const item of items) {
-    if (item.sentiment && item.sentiment in counts) {
-      counts[item.sentiment as keyof typeof counts]++;
-      if (item.sentimentSource === "manual") {
-        adjusted++;
-      }
+    const score = effectiveScore(item);
+    if (score === null) {
+      continue;
+    }
+    scored++;
+    total += score;
+    // The bucket breakdown stays the coarse view for the stacked bar. A
+    // numeric-only score still lands in a bucket by which third it falls in.
+    const bucket =
+      item.sentiment && item.sentiment in counts
+        ? (item.sentiment as keyof typeof counts)
+        : score >= 67
+          ? "positive"
+          : score > 33
+            ? "neutral"
+            : "negative";
+    counts[bucket]++;
+    if (item.sentimentSource === "manual") {
+      adjusted++;
     }
   }
-  const scored = counts.positive + counts.neutral + counts.negative;
-  const lean = scored ? (counts.positive - counts.negative) / scored : 0;
+
+  const mean = scored ? total / scored : 0;
   return {
     ...counts,
     scored,
     unscored: items.length - scored,
     adjusted,
-    net: scored ? Math.round(lean * 100) : null,
+    // Net keeps its old -100..+100 meaning, derived from the same mean.
+    net: scored ? Math.round((mean - 50) * 2) : null,
     // Halves are meaningful here (the deck prints 72.5), so round to 0.1.
-    score: scored ? Math.round((50 + 50 * lean) * 10) / 10 : null,
+    score: scored ? Math.round(mean * 10) / 10 : null,
   };
 }
 
@@ -394,9 +436,11 @@ export async function getReport(
   const BASE_COLUMNS =
     "id, title, url, source, source_type, label, priority, reason, snippet, published_at";
   const ANALYST_COLUMNS = `${BASE_COLUMNS}, feedback, sentiment, sentiment_source`;
-  let { data, error } = await runQuery(
-    `${ANALYST_COLUMNS}, byline, transcript, clip_url, engagement`,
-  );
+  const ENRICHED_COLUMNS = `${ANALYST_COLUMNS}, byline, transcript, clip_url, engagement`;
+  let { data, error } = await runQuery(`${ENRICHED_COLUMNS}, sentiment_score`);
+  if (error && error.message.includes("sentiment_score")) {
+    ({ data, error } = await runQuery(ENRICHED_COLUMNS));
+  }
   if (
     error &&
     ["byline", "transcript", "clip_url", "engagement"].some((column) =>
@@ -430,6 +474,8 @@ export async function getReport(
     feedback: (row.feedback as string | null) ?? null,
     sentiment: (row.sentiment as string | null) ?? null,
     sentimentSource: (row.sentiment_source as string | null) ?? null,
+    sentimentScore:
+      typeof row.sentiment_score === "number" ? row.sentiment_score : null,
     reason: (row.reason as string | null) ?? "",
     byline: (row.byline as string | null) ?? "",
     transcript: (row.transcript as string | null) ?? "",

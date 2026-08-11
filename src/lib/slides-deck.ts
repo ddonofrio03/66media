@@ -76,6 +76,9 @@ export type DeckOptions = {
   mediaThemes?: string[];
   socialThemes?: string[];
   sentimentTrend?: SentimentTrend;
+  /** Hand-set dials. Null/undefined = print the calculated value. */
+  mediaScoreOverride?: number | null;
+  socialScoreOverride?: number | null;
 };
 
 type Derived = {
@@ -382,7 +385,13 @@ function addFacilitySummarySlide(
     INK,
   );
 
-  y = sentimentScoreLine(slide, y, "Media Sentiment", d.facilitySentiment);
+  y = sentimentScoreLine(
+    slide,
+    y,
+    "Media Sentiment",
+    d.facilitySentiment,
+    options.mediaScoreOverride,
+  );
 
   y = labelledList(
     slide,
@@ -425,15 +434,17 @@ function sentimentScoreLine(
   y: number,
   label: string,
   mix: SentimentMix,
+  override?: number | null,
 ): number {
+  const shown = override ?? mix.score;
   slide.addText(
     [
       { text: `${label}:  `, options: { bold: true, color: BLUE } },
       {
         text:
-          mix.score === null
+          shown === null
             ? "Not scored"
-            : `${mix.score} / 100 — ${sentimentBand(mix.score)}`,
+            : `${shown} / 100 — ${sentimentBand(shown)}`,
         options: { color: INK, bold: true },
       },
       {
@@ -504,7 +515,13 @@ function addSocialSummarySlide(
     INK,
   );
 
-  y = sentimentScoreLine(slide, y, "Social Media Sentiment", d.socialSentiment);
+  y = sentimentScoreLine(
+    slide,
+    y,
+    "Social Media Sentiment",
+    d.socialSentiment,
+    options.socialScoreOverride,
+  );
 
   const trend = options.sentimentTrend;
   const trendText = trend

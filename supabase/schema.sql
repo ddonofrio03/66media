@@ -47,7 +47,13 @@ create table if not exists public.digest_items (
   byline     text,
   transcript text,
   clip_url   text,
-  engagement jsonb
+  engagement jsonb,
+  -- Optional fine-grained sentiment, 0 (negative) to 100 (positive). The
+  -- positive/neutral/negative buckets above are presets on this same scale
+  -- (100 / 50 / 0), so a report's dial is the mean of every scored item's
+  -- effective score whether it was set by bucket or by number. Null means
+  -- "use the bucket".
+  sentiment_score smallint check (sentiment_score between 0 and 100)
 );
 
 -- Migration for pre-existing databases (run once in the SQL editor):
@@ -69,8 +75,50 @@ create table if not exists public.digest_items (
 --   add column if not exists transcript text,
 --   add column if not exists clip_url text,
 --   add column if not exists engagement jsonb;
+--
+-- Per-item sentiment score + analyst curation (run once in the SQL editor):
+-- alter table public.digest_items
+--   add column if not exists sentiment_score smallint
+--     check (sentiment_score between 0 and 100);
+--
+-- create table if not exists public.report_curation (
+--   period       text not null,
+--   range_key    text not null,
+--   title        text,
+--   client_name  text,
+--   summary      text,
+--   featured_ids text[] not null default '{}',
+--   media_score  numeric(4,1) check (media_score between 0 and 100),
+--   social_score numeric(4,1) check (social_score between 0 and 100),
+--   updated_at   timestamptz not null default now(),
+--   primary key (period, range_key)
+-- );
+-- alter table public.report_curation enable row level security;
 
 create index if not exists digest_items_reported_on_idx on public.digest_items (reported_on);
+
+-- Analyst curation for one report period. Keyed by the same (period, key) pair
+-- the /reports page uses ("weekly" + the Saturday date, "monthly" + "2026-08").
+--
+-- Two jobs: persist the editable title/summary/featured picks, which previously
+-- lived only in React state and were lost on reload; and hold the optional
+-- hand-set sentiment dials. A null dial means "use the calculated value" —
+-- storing 0 and storing "not overridden" must stay distinguishable, which is
+-- why these are nullable rather than defaulted.
+create table if not exists public.report_curation (
+  period       text not null,
+  range_key    text not null,
+  title        text,
+  client_name  text,
+  summary      text,
+  featured_ids text[] not null default '{}',
+  media_score  numeric(4,1) check (media_score between 0 and 100),
+  social_score numeric(4,1) check (social_score between 0 and 100),
+  updated_at   timestamptz not null default now(),
+  primary key (period, range_key)
+);
+
+alter table public.report_curation enable row level security;
 
 -- One row per calendar day a digest was sent. Provides once-per-day
 -- idempotency and a history feed for the dashboard.

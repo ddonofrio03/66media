@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SentimentControl from "@/components/sentiment-control";
 import type { Report, ReportItem, SentimentMix } from "@/lib/report";
 
@@ -12,10 +12,21 @@ import type { Report, ReportItem, SentimentMix } from "@/lib/report";
  * featured-story selection, inline clip playback, CSV export, print-to-PDF.
  */
 
+/** Saved analyst edits for this period; mirrors ReportCuration in digest-store. */
+type Curation = {
+  title: string | null;
+  clientName: string | null;
+  summary: string | null;
+  featuredIds: string[];
+  mediaScore: number | null;
+  socialScore: number | null;
+};
+
 type Props = {
   report: Report;
   generatedOn: string;
   initialSummary: string;
+  curation: Curation;
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -239,33 +250,86 @@ export default function ReportView({
   report,
   generatedOn,
   initialSummary,
+  curation,
 }: Props) {
+  // Saved edits win over the generated defaults, so reopening a report shows
+  // the analyst's version rather than silently regenerating over their work.
   const [title, setTitle] = useState(
-    report.range.period === "weekly"
-      ? "Weekly Earned Media Report"
-      : report.range.period === "monthly"
-        ? "Monthly Earned Media Report"
-        : "Earned Media Report",
+    curation.title ??
+      (report.range.period === "weekly"
+        ? "Weekly Earned Media Report"
+        : report.range.period === "monthly"
+          ? "Monthly Earned Media Report"
+          : "Earned Media Report"),
   );
   const [clientName, setClientName] = useState(
-    "The 66 Express Outside the Beltway",
+    curation.clientName ?? "The 66 Express Outside the Beltway",
   );
   const [summary, setSummary] = useState(initialSummary);
-  const [featuredIds, setFeaturedIds] = useState<Set<string>>(
-    () =>
-      new Set(
-        report.items
-          .slice(0, Math.min(4, report.items.length))
-          .map((item) => item.id),
-      ),
+  const [featuredIds, setFeaturedIds] = useState<Set<string>>(() =>
+    curation.featuredIds.length
+      ? new Set(curation.featuredIds)
+      : new Set(
+          report.items
+            .slice(0, Math.min(4, report.items.length))
+            .map((item) => item.id),
+        ),
   );
 
   // Sentiment edits made since the page loaded, keyed by item id. Applied as a
   // delta to the server-computed mix rather than recounting client-side: the
   // coverage index is capped at 500 rows while the mix covers the whole range.
   const [sentimentEdits, setSentimentEdits] = useState<
-    Record<string, string | null>
+    Record<string, SentimentEdit>
   >({});
+
+  // Hand-set dials, loaded from the saved curation for this period. Debounced
+  // on save so dragging the slider doesn't fire a request per pixel.
+  const [mediaOverride, setMediaOverride] = useState<number | null>(
+    curation.mediaScore,
+  );
+  const [socialOverride, setSocialOverride] = useState<number | null>(
+    curation.socialScore,
+  );
+
+  const saveCuration = useCallback(
+    (patch: Record<string, unknown>) => {
+      void fetch("/api/curation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: report.range.period,
+          rangeKey: report.range.key,
+          ...patch,
+        }),
+      }).catch(() => {
+        // Curation is a convenience layer; a failed save must never block the
+        // analyst's editing. The value stays on screen and the next edit
+        // retries.
+      });
+    },
+    [report.range.period, report.range.key],
+  );
+
+  // Persist the written fields and featured picks a beat after typing stops,
+  // rather than on every keystroke. The first run is skipped so simply opening
+  // a report doesn't write the generated defaults over nothing.
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (!hydrated.current) {
+      hydrated.current = true;
+      return;
+    }
+    const timer = setTimeout(() => {
+      saveCuration({
+        title,
+        clientName,
+        summary,
+        featuredIds: [...featuredIds],
+      });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [title, clientName, summary, featuredIds, saveCuration]);
 
   const mediaSentiment = useMemo(
     () => applySentimentEdits(report, sentimentEdits, "media"),
@@ -674,8 +738,24 @@ export default function ReportView({
           {/* Two dials, matching the deck: media and social are scored and
               reported separately, never averaged into one number. */}
           <div className="mt-5 grid gap-5 lg:grid-cols-2">
-            <SentimentMeter mix={mediaSentiment} title="Media sentiment" />
-            <SentimentMeter mix={socialSentiment} title="Social media sentiment" />
+            <SentimentMeter
+              mix={mediaSentiment}
+              title="Media sentiment"
+              override={mediaOverride}
+              onOverride={(value) => {
+                setMediaOverride(value);
+                saveCuration({ mediaScore: value });
+              }}
+            />
+            <SentimentMeter
+              mix={socialSentiment}
+              title="Social media sentiment"
+              override={socialOverride}
+              onOverride={(value) => {
+                setSocialOverride(value);
+                saveCuration({ socialScore: value });
+              }}
+            />
           </div>
         </section>
 
@@ -869,10 +949,11 @@ export default function ReportView({
                           id={item.id}
                           initial={item.sentiment}
                           initialSource={item.sentimentSource}
-                          onChange={(value) =>
+                          initialScore={item.sentimentScore}
+                          onChange={(value, score) =>
                             setSentimentEdits((edits) => ({
                               ...edits,
-                              [item.id]: value,
+                              [item.id]: { value, score },
                             }))
                           }
                         />
@@ -1000,18 +1081,35 @@ function MixBars({
 
 type Bucket = "positive" | "neutral" | "negative";
 
+/** An in-page edit: the bucket and the 0–100 score it resolved to. */
+type SentimentEdit = { value: Bucket | null; score: number | null };
+
 function isBucket(value: string | null): value is Bucket {
   return value === "positive" || value === "neutral" || value === "negative";
 }
 
+/** Mirrors BUCKET_SCORE / effectiveScore in lib/report (server module). */
+const BUCKET_SCORE: Record<Bucket, number> = {
+  positive: 100,
+  neutral: 50,
+  negative: 0,
+};
+
+function scoreOf(item: ReportItem): number | null {
+  if (item.sentimentScore !== null) return item.sentimentScore;
+  return isBucket(item.sentiment) ? BUCKET_SCORE[item.sentiment] : null;
+}
+
 /**
- * Fold in-page sentiment edits into the server-computed mix. Each edit moves
- * one item out of its old bucket and into the new one (or out of "scored"
- * entirely when cleared), so the meter stays exact without re-querying.
+ * Fold in-page sentiment edits into the server-computed mix. The dial is the
+ * MEAN of every scored item, so the delta tracks the running total rather than
+ * just bucket counts — that keeps a typed 72 exact instead of rounding it to
+ * its bucket. Applied as a delta rather than recounting client-side because the
+ * coverage index is capped at 500 rows while the mix covers the whole range.
  */
 function applySentimentEdits(
   report: Report,
-  edits: Record<string, string | null>,
+  edits: Record<string, SentimentEdit>,
   scope: "all" | "media" | "social" = "all",
 ): SentimentMix {
   const base =
@@ -1026,6 +1124,9 @@ function applySentimentEdits(
   }
 
   const mix = { ...base };
+  // Reconstruct the running total the server's mean came from.
+  let total = base.score === null ? 0 : base.score * base.scored;
+
   for (const [id, next] of entries) {
     const item = report.items.find((candidate) => candidate.id === id);
     if (!item) {
@@ -1037,32 +1138,33 @@ function applySentimentEdits(
     if (scope === "media" && isSocialItem) continue;
     if (scope === "social" && !isSocialItem) continue;
 
-    const previous = item.sentiment;
-    if (previous === next) {
+    const previousScore = scoreOf(item);
+    const previousBucket = isBucket(item.sentiment) ? item.sentiment : null;
+    if (previousScore === next.score && previousBucket === next.value) {
       continue;
     }
 
-    if (isBucket(previous)) {
-      mix[previous]--;
+    if (previousScore !== null) {
+      total -= previousScore;
       mix.scored--;
       mix.unscored++;
+      if (previousBucket) mix[previousBucket]--;
       if (item.sentimentSource === "manual") {
         mix.adjusted--;
       }
     }
-    if (isBucket(next)) {
-      mix[next]++;
+    if (next.score !== null) {
+      total += next.score;
       mix.scored++;
       mix.unscored--;
+      if (next.value) mix[next.value]++;
       mix.adjusted++; // an in-page edit is a manual call by definition
     }
   }
 
-  const lean = mix.scored
-    ? (mix.positive - mix.negative) / mix.scored
-    : 0;
-  mix.net = mix.scored ? Math.round(lean * 100) : null;
-  mix.score = mix.scored ? Math.round((50 + 50 * lean) * 10) / 10 : null;
+  const mean = mix.scored ? total / mix.scored : 0;
+  mix.net = mix.scored ? Math.round((mean - 50) * 2) : null;
+  mix.score = mix.scored ? Math.round(mean * 10) / 10 : null;
   return mix;
 }
 
@@ -1075,10 +1177,17 @@ function applySentimentEdits(
 function SentimentMeter({
   mix,
   title = "Sentiment toward the 66 Express",
+  override,
+  onOverride,
 }: {
   mix: SentimentMix;
   title?: string;
+  /** Hand-set dial value; null means "use the calculated one". */
+  override?: number | null;
+  onOverride?: (value: number | null) => void;
 }) {
+  const calculated = mix.score;
+  const shown = override ?? calculated;
   const segments = [
     { key: "positive", label: "Positive", count: mix.positive, color: "#1a7f4b" },
     { key: "neutral", label: "Neutral", count: mix.neutral, color: "#8a8580" },
@@ -1098,14 +1207,14 @@ function SentimentMeter({
           <div className="flex items-end justify-between gap-4">
             <div>
               <div className="text-3xl font-extrabold leading-none text-[#105cae]">
-                {mix.score}
+                {shown}
                 <span className="text-lg font-semibold text-[var(--muted)]">
                   {" "}
                   / 100
                 </span>
               </div>
               <div className="mt-1 text-xs font-bold uppercase tracking-wide text-[#105cae]">
-                {sentimentBand(mix.score)}
+                {sentimentBand(shown)}
               </div>
             </div>
             <div className="text-right text-sm text-[var(--muted)]">
@@ -1119,17 +1228,51 @@ function SentimentMeter({
             </div>
           </div>
 
-          {/* 0–100 dial: the needle sits where the deck's gauge would point. */}
-          <div className="relative mt-4 h-2.5 overflow-hidden rounded-full bg-gradient-to-r from-[#c0392b] via-[#e4e1de] to-[#1a7f4b]">
+          {/* 0–100 dial: the needle sits where the deck's gauge would point.
+              Draggable when an override handler is supplied. */}
+          <div className="relative mt-4 h-2.5 rounded-full bg-gradient-to-r from-[#c0392b] via-[#e4e1de] to-[#1a7f4b]">
             <div
-              className="absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#141413] ring-2 ring-white"
-              style={{ left: `${mix.score}%` }}
+              className="pointer-events-none absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#141413] ring-2 ring-white"
+              style={{ left: `${shown}%` }}
             />
+            {onOverride ? (
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={0.5}
+                value={shown ?? 50}
+                aria-label={`${title} dial, 0 to 100`}
+                onChange={(event) => onOverride(Number(event.target.value))}
+                className="no-print absolute inset-0 h-full w-full cursor-ew-resize opacity-0"
+              />
+            ) : null}
           </div>
           <div className="mt-1 flex justify-between text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">
             <span>0 · Negative</span>
             <span>100 · Positive</span>
           </div>
+
+          {/* Provenance: never let a hand-set dial silently masquerade as the
+              measured one. */}
+          {onOverride && override !== null && override !== undefined ? (
+            <p className="no-print mt-2 text-xs leading-5 text-[var(--muted)]">
+              Hand-set to <strong>{override}</strong> — calculated value was{" "}
+              {calculated ?? "not scored"}.{" "}
+              <button
+                type="button"
+                onClick={() => onOverride(null)}
+                className="font-bold text-[#105cae] underline"
+              >
+                Reset to calculated
+              </button>
+            </p>
+          ) : onOverride ? (
+            <p className="no-print mt-2 text-xs leading-5 text-[var(--muted)]">
+              Calculated from the scored coverage. Drag the dial to set it by
+              hand.
+            </p>
+          ) : null}
 
           <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-[#e4e1de]">
             {segments.map((segment) =>

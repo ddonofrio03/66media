@@ -12,6 +12,7 @@ import {
   type Report,
   type ReportParams,
 } from "@/lib/report";
+import { getReportCuration } from "@/lib/digest-store";
 import ReportView from "./report-view";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +67,9 @@ export default async function ReportsPage({
   const q = (params.q ?? "").trim().slice(0, 80);
   const range = resolveRange(params);
   const report = await getReport(range, q);
+  // Saved analyst edits for this exact period — the written title/summary,
+  // featured picks, and any hand-set sentiment dials.
+  const curation = await getReportCuration(range.period, range.key);
 
   const generatedOn = new Date().toLocaleDateString("en-US", {
     timeZone: "America/New_York",
@@ -212,7 +216,8 @@ export default async function ReportsPage({
               key={`${report.range.period}:${report.range.key}:${q}`}
               report={report}
               generatedOn={generatedOn}
-              initialSummary={defaultSummary(report)}
+              initialSummary={curation.summary ?? defaultSummary(report)}
+              curation={curation}
             />
           </div>
         </div>

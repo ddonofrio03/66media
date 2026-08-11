@@ -38,12 +38,17 @@ function defaultSummary(report: Report): string {
     .slice(0, 3)
     .map((o) => o.source)
     .join(", ");
+  // Media and social are reported as separate figures, never summed into one
+  // "mentions" number — that is how the client deck reads them.
   const parts = [
-    `Monitoring captured ${report.totalMentions} relevant mention${report.totalMentions === 1 ? "" : "s"} across ${report.uniqueOutlets} outlet${report.uniqueOutlets === 1 ? "" : "s"} this period`,
+    `Monitoring captured ${report.mediaMentions} traditional-media mention${report.mediaMentions === 1 ? "" : "s"} across ${report.uniqueOutlets} outlet${report.uniqueOutlets === 1 ? "" : "s"} this period`,
     broadcast > 0
       ? `including ${broadcast} TV/radio item${broadcast === 1 ? "" : "s"}`
       : "",
     top ? `led by ${top}` : "",
+    report.socialMentions > 0
+      ? `alongside ${report.socialMentions} social post${report.socialMentions === 1 ? "" : "s"}`
+      : "",
   ].filter(Boolean);
   const important =
     report.importantCount > 0

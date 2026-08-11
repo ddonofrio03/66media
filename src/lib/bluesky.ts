@@ -28,6 +28,11 @@ type BskyPost = {
   author?: { handle?: string; displayName?: string };
   record?: { text?: string; createdAt?: string };
   indexedAt?: string;
+  // searchPosts returns these inline; no extra request needed.
+  likeCount?: number;
+  replyCount?: number;
+  repostCount?: number;
+  quoteCount?: number;
 };
 
 export async function collectBlueskyItems(): Promise<RawItem[]> {
@@ -123,6 +128,14 @@ function toRawItem(post: BskyPost): RawItem {
     publishedAt: toIso(post.record?.createdAt ?? post.indexedAt),
     provider: "Bluesky",
     domain: "bsky.app",
+    engagement: {
+      likes: post.likeCount,
+      comments: post.replyCount,
+      shares:
+        post.repostCount === undefined && post.quoteCount === undefined
+          ? undefined
+          : (post.repostCount ?? 0) + (post.quoteCount ?? 0),
+    },
   };
 }
 

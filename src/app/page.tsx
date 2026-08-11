@@ -73,10 +73,11 @@ export default async function DashboardPage() {
                   Top Stories — Last 7 Days
                 </h2>
                 <p className="mt-1 text-sm text-[var(--muted)]">
-                  {weekReport.totalMentions} relevant{" "}
-                  {pluralize("mention", weekReport.totalMentions)} across{" "}
+                  {weekReport.mediaMentions}{" "}
+                  {pluralize("media mention", weekReport.mediaMentions)} across{" "}
                   {weekReport.uniqueOutlets}{" "}
                   {pluralize("outlet", weekReport.uniqueOutlets)}
+                  {` · ${weekReport.socialMentions} social ${pluralize("post", weekReport.socialMentions)}`}
                   {weekReport.importantCount > 0
                     ? ` · ${weekReport.importantCount} flagged important`
                     : ""}

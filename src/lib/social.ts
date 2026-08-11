@@ -1,5 +1,6 @@
 import type { MonitoringSettings } from "@/lib/monitoring-settings";
 import type { RawItem } from "@/lib/collectors";
+import type { Engagement } from "@/lib/types";
 import { isXOfficialEnabled } from "@/lib/x-official";
 
 // Apify pay-per-result social collector. X (Twitter) keyword search is the
@@ -194,6 +195,7 @@ async function collectX(keywords: string[], token: string): Promise<RawItem[]> {
       ),
       provider: "X (Apify)",
       domain: "x.com",
+      engagement: engagementFrom(post),
     };
   }).filter((item) => item.url);
 }
@@ -247,6 +249,7 @@ async function collectFacebookPages(token: string): Promise<RawItem[]> {
       ),
       provider: "Facebook (Apify)",
       domain: "facebook.com",
+      engagement: engagementFrom(post),
     };
   }).filter((item) => item.url);
 }
@@ -317,6 +320,7 @@ async function collectLinkedInPage(
         ),
         provider: "LinkedIn (Apify)",
         domain: "linkedin.com",
+        engagement: engagementFrom(post),
       };
     })
     .filter((item) => item.url);
@@ -389,6 +393,48 @@ function pick(obj: Record<string, unknown>, paths: string[]): unknown {
 
 function str(value: unknown): string {
   return typeof value === "string" ? value.trim() : value == null ? "" : String(value);
+}
+
+/**
+ * A count from an actor payload, or undefined when the actor didn't report one.
+ * Never coerces a missing field to 0 — "no data" and "nobody engaged" mean
+ * different things when ranking social echo. Actors sometimes return counts as
+ * formatted strings ("1,234"), so digits are extracted rather than parsed.
+ */
+function count(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? value : undefined;
+  }
+  const digits = str(value).replace(/[,\s]/g, "");
+  if (!/^\d+$/.test(digits)) {
+    return undefined;
+  }
+  return Number.parseInt(digits, 10);
+}
+
+/** Collapse a payload's engagement fields, dropping the ones it didn't report. */
+function engagementFrom(post: Record<string, unknown>): Engagement | undefined {
+  const engagement: Engagement = {
+    likes: count(
+      pick(post, ["likes", "likesCount", "likeCount", "reactionsCount",
+        "numLikes", "stats.likes", "reactions.total"]),
+    ),
+    comments: count(
+      pick(post, ["comments", "commentsCount", "commentCount", "numComments",
+        "stats.comments", "repliesCount"]),
+    ),
+    shares: count(
+      pick(post, ["shares", "sharesCount", "shareCount", "repostsCount",
+        "numShares", "stats.shares", "retweetCount"]),
+    ),
+    views: count(
+      pick(post, ["views", "viewsCount", "viewCount", "playCount",
+        "impressions", "stats.views"]),
+    ),
+  };
+  return Object.values(engagement).some((v) => v !== undefined)
+    ? engagement
+    : undefined;
 }
 
 function toIso(value: unknown): string {

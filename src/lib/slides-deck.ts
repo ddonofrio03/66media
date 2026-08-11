@@ -1,6 +1,12 @@
 import PptxGenJS from "pptxgenjs";
 import { socialPlatform } from "@/lib/digest";
-import type { Report, ReportItem } from "@/lib/report";
+import {
+  sentimentBand,
+  sentimentOf,
+  type Report,
+  type ReportItem,
+  type SentimentMix,
+} from "@/lib/report";
 import type { SentimentTrend } from "@/lib/report-insights";
 
 /**
@@ -79,8 +85,8 @@ type Derived = {
   online: number;
   radio: number;
   tv: number;
-  facilitySentiment: { positive: number; neutral: number; negative: number };
-  socialSentiment: { positive: number; neutral: number; negative: number };
+  facilitySentiment: SentimentMix;
+  socialSentiment: SentimentMix;
   facilityOutlets: string[];
 };
 
@@ -146,15 +152,9 @@ export async function buildReportDeck(
 
 /* ------------------------------ Derive ------------------------------- */
 
-function countSentiment(items: ReportItem[]) {
-  const counts = { positive: 0, neutral: 0, negative: 0 };
-  for (const item of items) {
-    if (item.sentiment && item.sentiment in counts) {
-      counts[item.sentiment as keyof typeof counts]++;
-    }
-  }
-  return counts;
-}
+// Sentiment for the deck comes from the same helper the web report uses, so a
+// dial printed in the deck always matches the one on screen.
+const countSentiment = sentimentOf;
 
 function derive(report: Report): Derived {
   const news = report.items.filter((item) => item.sourceType !== "social");
@@ -382,6 +382,8 @@ function addFacilitySummarySlide(
     INK,
   );
 
+  y = sentimentScoreLine(slide, y, "Media Sentiment", d.facilitySentiment);
+
   y = labelledList(
     slide,
     y,
@@ -411,6 +413,47 @@ function addFacilitySummarySlide(
       lineSpacingMultiple: 1.25,
     });
   }
+}
+
+/**
+ * The 0–100 dial figure the client deck prints, with its band label — e.g.
+ * "Social Media Sentiment: 72.5 / 100 — Mostly Positive". Rendered as a scored
+ * line rather than a drawn gauge; the gauge artwork stays in the design pass.
+ */
+function sentimentScoreLine(
+  slide: PptxGenJS.Slide,
+  y: number,
+  label: string,
+  mix: SentimentMix,
+): number {
+  slide.addText(
+    [
+      { text: `${label}:  `, options: { bold: true, color: BLUE } },
+      {
+        text:
+          mix.score === null
+            ? "Not scored"
+            : `${mix.score} / 100 — ${sentimentBand(mix.score)}`,
+        options: { color: INK, bold: true },
+      },
+      {
+        text:
+          mix.scored > 0
+            ? `   (${mix.scored} of ${mix.scored + mix.unscored} scored)`
+            : "",
+        options: { color: MUTED, fontSize: 10 },
+      },
+    ],
+    {
+      x: MARGIN,
+      y,
+      w: CONTENT_W,
+      h: 0.4,
+      fontFace: FONT,
+      fontSize: 13,
+    },
+  );
+  return y + 0.55;
 }
 
 function addSocialSummarySlide(
@@ -460,6 +503,8 @@ function addSocialSummarySlide(
     ],
     INK,
   );
+
+  y = sentimentScoreLine(slide, y, "Social Media Sentiment", d.socialSentiment);
 
   const trend = options.sentimentTrend;
   const trendText = trend

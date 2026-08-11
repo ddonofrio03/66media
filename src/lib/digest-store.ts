@@ -79,7 +79,7 @@ export async function upsertCollectedItems(
   }
 
   const seenAt = now.toISOString();
-  const rows = items.map((item) => ({
+  const baseRows = items.map((item) => ({
     id: item.id,
     title: item.title,
     url: item.url,
@@ -93,14 +93,39 @@ export async function upsertCollectedItems(
     last_seen_at: seenAt,
   }));
 
-  const { error } = await supabase
+  // Enrichment columns — see the migration note in supabase/schema.sql. Left
+  // undefined (not null) when absent, so an existing value is never wiped by a
+  // later run that happened not to re-derive it.
+  const enrichedRows = baseRows.map((row, index) => ({
+    ...row,
+    byline: items[index].byline,
+    transcript: items[index].transcript,
+    clip_url: items[index].clipUrl,
+    engagement: items[index].engagement,
+  }));
+
+  let { error } = await supabase
     .from("digest_items")
-    .upsert(rows, { onConflict: "id" });
+    .upsert(enrichedRows, { onConflict: "id" });
+
+  // Degrade to the pre-migration column set rather than losing the whole run.
+  // Matches how getReport() tolerates the optional analyst columns.
+  if (error && ENRICHMENT_COLUMNS.some((c) => error?.message.includes(c))) {
+    console.warn(
+      "[digest-store] enrichment columns missing; upserting without them. " +
+        "Run the report-enrichment migration in supabase/schema.sql.",
+    );
+    ({ error } = await supabase
+      .from("digest_items")
+      .upsert(baseRows, { onConflict: "id" }));
+  }
 
   if (error) {
     console.error("[digest-store] upsertCollectedItems failed:", error.message);
   }
 }
+
+const ENRICHMENT_COLUMNS = ["byline", "transcript", "clip_url", "engagement"];
 
 /** Stamp the items that actually went out in today's digest as reported. */
 export async function markReported(

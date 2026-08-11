@@ -33,6 +33,13 @@ type Tweet = {
   text?: string;
   author_id?: string;
   created_at?: string;
+  public_metrics?: {
+    like_count?: number;
+    reply_count?: number;
+    retweet_count?: number;
+    quote_count?: number;
+    impression_count?: number;
+  };
 };
 
 type XUser = { id: string; username?: string; name?: string };
@@ -56,7 +63,9 @@ export async function collectXOfficialItems(
     "start_time",
     new Date(now.getTime() - LOOKBACK_MINUTES * 60_000).toISOString(),
   );
-  url.searchParams.set("tweet.fields", "created_at,author_id");
+  // public_metrics is free on the same read — it is what the report ranks
+  // "top mentions by social echo" on.
+  url.searchParams.set("tweet.fields", "created_at,author_id,public_metrics");
   url.searchParams.set("expansions", "author_id");
   url.searchParams.set("user.fields", "username");
 
@@ -109,6 +118,18 @@ export async function collectXOfficialItems(
           publishedAt: toIso(tweet.created_at),
           provider: "X (Official)",
           domain: "x.com",
+          engagement: {
+            likes: tweet.public_metrics?.like_count,
+            comments: tweet.public_metrics?.reply_count,
+            // Retweets and quotes are both onward shares; echo counts them together.
+            shares:
+              tweet.public_metrics?.retweet_count === undefined &&
+              tweet.public_metrics?.quote_count === undefined
+                ? undefined
+                : (tweet.public_metrics?.retweet_count ?? 0) +
+                  (tweet.public_metrics?.quote_count ?? 0),
+            views: tweet.public_metrics?.impression_count,
+          },
         };
       })
       .filter((item) => item.url);

@@ -34,7 +34,20 @@ create table if not exists public.digest_items (
   -- pass skips those rows forever, so a human call is never silently reverted.
   sentiment        text check (sentiment in ('positive', 'neutral', 'negative')),
   sentiment_source text check (sentiment_source in ('auto', 'manual')),
-  sentiment_at     timestamptz
+  sentiment_at     timestamptz,
+  -- Report enrichment. All nullable: each provider supplies a different subset,
+  -- and rows collected before this migration simply carry nulls.
+  --
+  -- byline     — reporter credit (RSS dc:creator), for "Prominent Reporters".
+  -- transcript — verbatim on-air excerpt from a caption match, quoted in the deck.
+  -- clip_url   — deep link to the moment of the mention (playable clip).
+  -- engagement — platform response {likes, comments, shares, views}; the basis
+  --              for "top mentions by social echo". A missing key means the
+  --              platform didn't report it, which is NOT the same as zero.
+  byline     text,
+  transcript text,
+  clip_url   text,
+  engagement jsonb
 );
 
 -- Migration for pre-existing databases (run once in the SQL editor):
@@ -49,6 +62,13 @@ create table if not exists public.digest_items (
 --   add column if not exists sentiment_source text
 --     check (sentiment_source in ('auto','manual')),
 --   add column if not exists sentiment_at timestamptz;
+--
+-- Report enrichment migration (run once in the SQL editor):
+-- alter table public.digest_items
+--   add column if not exists byline text,
+--   add column if not exists transcript text,
+--   add column if not exists clip_url text,
+--   add column if not exists engagement jsonb;
 
 create index if not exists digest_items_reported_on_idx on public.digest_items (reported_on);
 

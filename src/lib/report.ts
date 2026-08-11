@@ -1,5 +1,6 @@
 import { socialPlatform } from "@/lib/digest";
 import { getSupabase } from "@/lib/db";
+import type { Engagement } from "@/lib/types";
 
 /**
  * Weekly + monthly earned-media reports built from the digest_items archive —
@@ -36,7 +37,23 @@ export type ReportItem = {
   feedback: string | null;
   sentiment: string | null;
   sentimentSource: string | null;
+  /** Why the classifier kept this story — the deck's "Relevance:" line. */
+  reason: string;
+  /** Reporter credit, when the feed supplied one. */
+  byline: string;
+  /** Verbatim on-air excerpt, quoted under broadcast mentions. */
+  transcript: string;
+  /** Deep link to the moment of the mention. */
+  clipUrl: string;
+  engagement: Engagement | null;
 };
+
+/** Total onward reach of a post — the "social echo" ranking key. */
+export function echoScore(item: ReportItem): number {
+  const e = item.engagement;
+  if (!e) return 0;
+  return (e.likes ?? 0) + (e.comments ?? 0) + (e.shares ?? 0);
+}
 
 /**
  * Sentiment toward the 66 Express across the range. `scored` is the
@@ -54,23 +71,93 @@ export type SentimentMix = {
   adjusted: number;
   /** -100 (all negative) to +100 (all positive); null when nothing is scored. */
   net: number | null;
+  /**
+   * The 0–100 dial the client deck prints. Reverse-engineered from the printed
+   * reports and verified against them: the 08-07-2026 issue shows 72.5 for a
+   * social mix of 11 positive / 7 neutral / 2 negative of 20, and 100 for a
+   * media mix of 4 positive of 4. Null when nothing is scored.
+   */
+  score: number | null;
 };
+
+/** Band label under the dial, matching the deck's wording. */
+export function sentimentBand(score: number | null): string {
+  if (score === null) return "Not scored";
+  if (score >= 90) return "Positive";
+  if (score >= 60) return "Mostly Positive";
+  if (score > 40) return "Neutral";
+  if (score > 10) return "Mostly Negative";
+  return "Negative";
+}
+
+/**
+ * Sentiment mix over a set of items. `scored` is the denominator — unscored
+ * items are excluded rather than counted as neutral, so the dial never
+ * overstates how much coverage was actually assessed.
+ */
+export function sentimentOf(items: ReportItem[]): SentimentMix {
+  const counts = { positive: 0, neutral: 0, negative: 0 };
+  let adjusted = 0;
+  for (const item of items) {
+    if (item.sentiment && item.sentiment in counts) {
+      counts[item.sentiment as keyof typeof counts]++;
+      if (item.sentimentSource === "manual") {
+        adjusted++;
+      }
+    }
+  }
+  const scored = counts.positive + counts.neutral + counts.negative;
+  const lean = scored ? (counts.positive - counts.negative) / scored : 0;
+  return {
+    ...counts,
+    scored,
+    unscored: items.length - scored,
+    adjusted,
+    net: scored ? Math.round(lean * 100) : null,
+    // Halves are meaningful here (the deck prints 72.5), so round to 0.1.
+    score: scored ? Math.round((50 + 50 * lean) * 10) / 10 : null,
+  };
+}
+
+/**
+ * Traditional media and social are reported as two separate universes, the way
+ * the client deck does it — separate counts, separate outlet rankings, separate
+ * sentiment gauges. Lumping them produced a "Top Publishers" list where an X
+ * handle outranked WTOP, which is meaningless to a comms team.
+ *
+ * media = news + broadcast · social = social.
+ */
+export function isSocial(item: ReportItem): boolean {
+  return item.sourceType === "social";
+}
 
 export type Report = {
   range: ReportRange;
   available: boolean; // false when Supabase isn't configured
+  /** Media + social combined. Prefer the split counts in client-facing copy. */
   totalMentions: number;
+  mediaMentions: number;
+  socialMentions: number;
+  /** Distinct traditional-media outlets only — never social accounts. */
   uniqueOutlets: number;
+  uniqueSocialAccounts: number;
   byType: Array<{ type: string; count: number }>;
   byLabel: Array<{ label: string; count: number }>;
+  /** Traditional media only. */
   topOutlets: Array<{ source: string; count: number }>;
-  daily: Array<{ label: string; count: number }>;
+  /** Social accounts only, ranked by post count. */
+  topSocialAccounts: Array<{ source: string; count: number }>;
+  /** Per-day totals, split into the two series the overview chart plots. */
+  daily: Array<{ label: string; count: number; media: number; social: number }>;
   // Ranked best-first: important, then confirmed, likely, the rest. The full
   // in-range list (capped at 500) — the coverage index / CSV export use all of
   // it; "featured" defaults come from the top of this ranking.
   items: ReportItem[];
   importantCount: number;
+  /** All coverage combined. The deck prints the two split gauges instead. */
   sentiment: SentimentMix;
+  mediaSentiment: SentimentMix;
+  socialSentiment: SentimentMix;
   // Social breakdown for the Social Pulse section.
   byPlatform: Array<{ platform: string; count: number }>;
   socialPosts: ReportItem[]; // newest-first, capped
@@ -257,26 +344,25 @@ export async function getReport(
   range: ReportRange,
   q = "",
 ): Promise<Report> {
+  const emptyMix = sentimentOf([]);
   const base: Report = {
     range,
     available: false,
     totalMentions: 0,
+    mediaMentions: 0,
+    socialMentions: 0,
     uniqueOutlets: 0,
+    uniqueSocialAccounts: 0,
     byType: [],
     byLabel: [],
     topOutlets: [],
+    topSocialAccounts: [],
     daily: [],
     items: [],
     importantCount: 0,
-    sentiment: {
-      positive: 0,
-      neutral: 0,
-      negative: 0,
-      scored: 0,
-      unscored: 0,
-      adjusted: 0,
-      net: null,
-    },
+    sentiment: emptyMix,
+    mediaSentiment: emptyMix,
+    socialSentiment: emptyMix,
     byPlatform: [],
     socialPosts: [],
   };
@@ -303,13 +389,22 @@ export async function getReport(
     return query;
   };
 
-  // Tolerate the optional analyst columns not existing yet: each has its own
+  // Tolerate the optional columns not existing yet: each arrived with its own
   // migration, so degrade through the column sets until one selects cleanly.
   const BASE_COLUMNS =
-    "id, title, url, source, source_type, label, priority, snippet, published_at";
+    "id, title, url, source, source_type, label, priority, reason, snippet, published_at";
+  const ANALYST_COLUMNS = `${BASE_COLUMNS}, feedback, sentiment, sentiment_source`;
   let { data, error } = await runQuery(
-    `${BASE_COLUMNS}, feedback, sentiment, sentiment_source`,
+    `${ANALYST_COLUMNS}, byline, transcript, clip_url, engagement`,
   );
+  if (
+    error &&
+    ["byline", "transcript", "clip_url", "engagement"].some((column) =>
+      error?.message.includes(column),
+    )
+  ) {
+    ({ data, error } = await runQuery(ANALYST_COLUMNS));
+  }
   if (error && error.message.includes("sentiment")) {
     ({ data, error } = await runQuery(`${BASE_COLUMNS}, feedback`));
   }
@@ -335,26 +430,46 @@ export async function getReport(
     feedback: (row.feedback as string | null) ?? null,
     sentiment: (row.sentiment as string | null) ?? null,
     sentimentSource: (row.sentiment_source as string | null) ?? null,
+    reason: (row.reason as string | null) ?? "",
+    byline: (row.byline as string | null) ?? "",
+    transcript: (row.transcript as string | null) ?? "",
+    clipUrl: (row.clip_url as string | null) ?? "",
+    engagement: (row.engagement as Engagement | null) ?? null,
   }));
+
+  const mediaItems = items.filter((item) => !isSocial(item));
+  const socialItems = items.filter(isSocial);
 
   const typeCounts = new Map<string, number>();
   const labelCounts = new Map<string, number>();
+  // Outlets and accounts are counted in separate maps so a busy X handle can
+  // never appear in — or crowd out — the traditional-media outlet ranking.
   const outletCounts = new Map<string, number>();
-  const dayCounts = new Map<string, number>(
-    range.dayKeys.map((key) => [key, 0]),
+  const accountCounts = new Map<string, number>();
+  const dayCounts = new Map<string, { media: number; social: number }>(
+    range.dayKeys.map((key) => [key, { media: 0, social: 0 }]),
   );
 
   for (const item of items) {
     typeCounts.set(item.sourceType, (typeCounts.get(item.sourceType) ?? 0) + 1);
     labelCounts.set(item.label, (labelCounts.get(item.label) ?? 0) + 1);
-    outletCounts.set(item.source, (outletCounts.get(item.source) ?? 0) + 1);
+    const bucket = isSocial(item) ? accountCounts : outletCounts;
+    bucket.set(item.source, (bucket.get(item.source) ?? 0) + 1);
     if (item.publishedAt) {
       const key = easternDateKey(new Date(item.publishedAt));
-      if (dayCounts.has(key)) {
-        dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
+      const day = dayCounts.get(key);
+      if (day) {
+        if (isSocial(item)) day.social++;
+        else day.media++;
       }
     }
   }
+
+  const ranked = (counts: Map<string, number>, limit: number) =>
+    [...counts.entries()]
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
 
   const storyRank = (item: ReportItem) => {
     if (item.priority === "important") return 0;
@@ -367,69 +482,52 @@ export async function getReport(
     ...base,
     available: true,
     totalMentions: items.length,
+    mediaMentions: mediaItems.length,
+    socialMentions: socialItems.length,
     uniqueOutlets: outletCounts.size,
+    uniqueSocialAccounts: accountCounts.size,
     byType: [...typeCounts.entries()]
       .map(([type, count]) => ({ type, count }))
       .sort((a, b) => b.count - a.count),
     byLabel: [...labelCounts.entries()]
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count),
-    topOutlets: [...outletCounts.entries()]
-      .map(([source, count]) => ({ source, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 12),
-    daily: range.dayKeys.map((key) => ({
-      label:
-        range.period === "weekly"
-          ? utcMidnightEastern(key).toLocaleDateString("en-US", {
-              weekday: "short",
-              timeZone: "UTC",
-            })
-          : shortDate(key),
-      count: dayCounts.get(key) ?? 0,
-    })),
+    topOutlets: ranked(outletCounts, 12),
+    topSocialAccounts: ranked(accountCounts, 12),
+    daily: range.dayKeys.map((key) => {
+      const day = dayCounts.get(key) ?? { media: 0, social: 0 };
+      return {
+        label:
+          range.period === "weekly"
+            ? utcMidnightEastern(key).toLocaleDateString("en-US", {
+                weekday: "short",
+                timeZone: "UTC",
+              })
+            : shortDate(key),
+        count: day.media + day.social,
+        media: day.media,
+        social: day.social,
+      };
+    }),
     items: [...items]
       .sort((a, b) => storyRank(a) - storyRank(b))
       .slice(0, 500),
     importantCount: items.filter((item) => item.priority === "important")
       .length,
-    sentiment: (() => {
-      const counts = { positive: 0, neutral: 0, negative: 0 };
-      let adjusted = 0;
-      for (const item of items) {
-        if (item.sentiment && item.sentiment in counts) {
-          counts[item.sentiment as keyof typeof counts]++;
-          if (item.sentimentSource === "manual") {
-            adjusted++;
-          }
-        }
-      }
-      const scored = counts.positive + counts.neutral + counts.negative;
-      return {
-        ...counts,
-        scored,
-        unscored: items.length - scored,
-        adjusted,
-        net: scored
-          ? Math.round(((counts.positive - counts.negative) / scored) * 100)
-          : null,
-      };
-    })(),
+    sentiment: sentimentOf(items),
+    mediaSentiment: sentimentOf(mediaItems),
+    socialSentiment: sentimentOf(socialItems),
     byPlatform: (() => {
       const counts = new Map<string, number>();
-      for (const item of items) {
-        if (item.sourceType === "social") {
-          const platform = socialPlatform(item.url);
-          counts.set(platform, (counts.get(platform) ?? 0) + 1);
-        }
+      for (const item of socialItems) {
+        const platform = socialPlatform(item.url);
+        counts.set(platform, (counts.get(platform) ?? 0) + 1);
       }
       return [...counts.entries()]
         .map(([platform, count]) => ({ platform, count }))
         .sort((a, b) => b.count - a.count);
     })(),
     // `items` arrives from the query newest-first; keep that order here.
-    socialPosts: items
-      .filter((item) => item.sourceType === "social")
-      .slice(0, 8),
+    socialPosts: socialItems.slice(0, 40),
   };
 }

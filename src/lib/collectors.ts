@@ -10,7 +10,12 @@ import { collectXOfficialItems, isXOfficialEnabled } from "@/lib/x-official";
 import { enrichYouTubeTranscripts } from "@/lib/youtube-captions";
 import { refineClassifications } from "@/lib/ai-classify";
 import { getDigestLookbackHours } from "@/lib/time";
-import type { DigestItem, RelevanceLabel, Source } from "@/lib/types";
+import type {
+  DigestItem,
+  Engagement,
+  RelevanceLabel,
+  Source,
+} from "@/lib/types";
 
 export type RawItem = {
   title: string;
@@ -21,6 +26,12 @@ export type RawItem = {
   publishedAt: string;
   provider: string;
   domain?: string;
+  // Report-enrichment fields. Optional everywhere: each provider supplies a
+  // different subset, and they pass through the classifier untouched.
+  byline?: string;
+  transcript?: string;
+  clipUrl?: string;
+  engagement?: Engagement;
 };
 
 type CollectionResult = {
@@ -188,6 +199,7 @@ async function collectGoogleNewsQuery(query: string): Promise<RawItem[]> {
     snippet: item.description || item.title,
     publishedAt: parseDate(item.pubDate),
     provider: "Google News",
+    byline: item.byline || undefined,
   }));
 }
 
@@ -271,6 +283,7 @@ async function collectFeed(feed: FeedSource): Promise<RawItem[]> {
     publishedAt: parseDate(item.pubDate),
     provider,
     domain: feed.domain,
+    byline: item.byline || undefined,
   }));
 }
 
@@ -335,6 +348,12 @@ function classifyItem(
     reason,
     snippet: truncate(cleanText(item.snippet || item.title), 360),
     publishedAt: item.publishedAt,
+    // Enrichment passes through untouched — the classifier decides relevance,
+    // not what a row happens to carry.
+    byline: item.byline,
+    transcript: item.transcript,
+    clipUrl: item.clipUrl,
+    engagement: item.engagement,
   };
 }
 
@@ -588,10 +607,36 @@ function parseRssItems(xml: string) {
       pubDate: readXmlTag(itemXml, "pubDate"),
       description: stripTags(readXmlTag(itemXml, "description")),
       source: readXmlTag(itemXml, "source"),
+      byline: readByline(itemXml),
     });
   }
 
   return items.filter((item) => item.link && item.title);
+}
+
+/**
+ * Reporter credit for the "Prominent Outlets/Reporters" section of the report.
+ * `dc:creator` is the reliable one; RSS `<author>` is specified as an email
+ * address, so it only contributes the display name some publishers append
+ * ("news@wtop.com (Neal Augenstein)").
+ */
+function readByline(itemXml: string): string {
+  const creator = readXmlTag(itemXml, "dc:creator").trim();
+  if (creator) {
+    return cleanByline(creator);
+  }
+  const author = readXmlTag(itemXml, "author").trim();
+  const named = author.match(/\(([^)]+)\)/)?.[1];
+  return cleanByline(named ?? (author.includes("@") ? "" : author));
+}
+
+function cleanByline(value: string): string {
+  const cleaned = value
+    .replace(/^\s*by\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Guard against feeds that stuff the outlet name or a whole sentence here.
+  return cleaned.length > 0 && cleaned.length <= 80 ? cleaned : "";
 }
 
 function parseAtomEntries(xml: string) {
@@ -731,6 +776,7 @@ type RssItem = {
   pubDate: string;
   description: string;
   source: string;
+  byline: string;
 };
 
 type AtomEntry = {

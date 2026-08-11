@@ -46,6 +46,19 @@ function formatItemDate(item: ReportItem) {
     : itemDateFormat.format(parsed);
 }
 
+// Local copy of the sentiment band labels. Same reason as platformOf below:
+// lib/report is a server module (it opens the Supabase client), so importing a
+// VALUE from it here drags the server pipeline into the client bundle and the
+// build fails. Keep this in step with sentimentBand() in lib/report.ts.
+function sentimentBand(score: number | null): string {
+  if (score === null) return "Not scored";
+  if (score >= 90) return "Positive";
+  if (score >= 60) return "Mostly Positive";
+  if (score > 40) return "Neutral";
+  if (score > 10) return "Mostly Negative";
+  return "Negative";
+}
+
 // Local copy of the platform bucketing (importing it from lib/digest would
 // pull the whole server digest pipeline into the client bundle).
 function platformOf(url: string): string {
@@ -64,6 +77,27 @@ function platformOf(url: string): string {
 
 function typeLabel(item: ReportItem) {
   return TYPE_LABELS[item.sourceType] ?? item.sourceType;
+}
+
+/**
+ * "12 likes · 5 comments · 3 shares" — the platform's own counts, omitting any
+ * the platform didn't report. Empty string when nothing is known, so callers
+ * can skip the separator entirely.
+ */
+function engagementLabel(item: ReportItem): string {
+  const e = item.engagement;
+  if (!e) return "";
+  const parts: string[] = [];
+  const add = (value: number | undefined, one: string, many: string) => {
+    if (value !== undefined) {
+      parts.push(`${value.toLocaleString("en-US")} ${value === 1 ? one : many}`);
+    }
+  };
+  add(e.likes, "like", "likes");
+  add(e.comments, "comment", "comments");
+  add(e.shares, "share", "shares");
+  add(e.views, "view", "views");
+  return parts.join(" · ");
 }
 
 /* ------------------------------ Clips -------------------------------- */
@@ -148,18 +182,26 @@ function downloadCsv(report: Report) {
     "Published date",
     "Title",
     "Publisher",
+    "Reporter",
     "Media type",
     "Relevance",
     "Priority",
     "Sentiment",
     "Sentiment set by",
+    "Likes",
+    "Comments",
+    "Shares",
+    "Views",
     "URL",
     "Snippet",
+    "On-air transcript",
+    "Relevance rationale",
   ];
   const rows = report.items.map((item) => [
     formatItemDate(item),
     item.title,
     item.source,
+    item.byline,
     typeLabel(item),
     LABEL_LABELS[item.label] ?? item.label,
     item.priority,
@@ -169,8 +211,15 @@ function downloadCsv(report: Report) {
       : item.sentimentSource === "auto"
         ? "automatic"
         : "",
+    // Blank, not 0 — the platform not reporting a count is not zero engagement.
+    item.engagement?.likes ?? "",
+    item.engagement?.comments ?? "",
+    item.engagement?.shares ?? "",
+    item.engagement?.views ?? "",
     item.url,
     item.snippet,
+    item.transcript,
+    item.reason,
   ]);
   const csv = [header, ...rows]
     .map((row) => row.map(escapeCsv).join(","))
@@ -218,8 +267,12 @@ export default function ReportView({
     Record<string, string | null>
   >({});
 
-  const sentimentMix = useMemo(
-    () => applySentimentEdits(report, sentimentEdits),
+  const mediaSentiment = useMemo(
+    () => applySentimentEdits(report, sentimentEdits, "media"),
+    [report, sentimentEdits],
+  );
+  const socialSentiment = useMemo(
+    () => applySentimentEdits(report, sentimentEdits, "social"),
     [report, sentimentEdits],
   );
 
@@ -297,11 +350,17 @@ export default function ReportView({
   }
 
   const featured = report.items.filter((item) => featuredIds.has(item.id));
-  const maxDaily = Math.max(1, ...report.daily.map((d) => d.count));
+  // Grouped bars are scaled to the tallest single series value, not the day total.
+  const maxDaily = Math.max(
+    1,
+    ...report.daily.flatMap((d) => [d.media, d.social]),
+  );
   const broadcastCount =
     report.byType.find((t) => t.type === "broadcast")?.count ?? 0;
-  const broadcastPercent = report.totalMentions
-    ? Math.round((broadcastCount / report.totalMentions) * 100)
+  // Share of TRADITIONAL MEDIA, not of everything — social posts are not part
+  // of the online/broadcast split.
+  const broadcastPercent = report.mediaMentions
+    ? Math.round((broadcastCount / report.mediaMentions) * 100)
     : 0;
   const maxOutlet = Math.max(1, ...report.topOutlets.map((o) => o.count));
   const denseChart = report.daily.length > 10;
@@ -487,33 +546,47 @@ export default function ReportView({
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric label="Earned mentions" value={report.totalMentions} />
-            <Metric label="Unique publishers" value={report.uniqueOutlets} />
-            <Metric label="Broadcast mentions" value={broadcastCount} />
+            <Metric label="Media mentions" value={report.mediaMentions} />
+            <Metric label="Social posts" value={report.socialMentions} />
+            <Metric label="Media outlets" value={report.uniqueOutlets} />
             <Metric label="Priority mentions" value={report.importantCount} />
           </div>
 
           <div className="mt-6 grid gap-5 lg:grid-cols-[1.25fr_0.75fr]">
-            <ReportPanel title="Mention activity by day">
-              <div className="flex min-h-48 items-end gap-1.5 pt-5">
-                {report.daily.map(({ label, count }, index) => (
+            {/* Media and social plot as separate series — they are separate
+                universes in the client deck and must never be summed. */}
+            <ReportPanel title="Media vs. social by day">
+              <div className="mb-1 flex items-center justify-end gap-4 text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--muted)]">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-[#ee7729]" /> Media
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-[#105cae]" /> Social
+                </span>
+              </div>
+              <div className="flex min-h-48 items-end gap-1.5 pt-2">
+                {report.daily.map(({ label, media, social }, index) => (
                   <div
                     key={`${label}-${index}`}
                     className="flex min-w-0 flex-1 flex-col items-center gap-1.5"
-                    title={`${label}: ${count} mention${count === 1 ? "" : "s"}`}
+                    title={`${label}: ${media} media, ${social} social`}
                   >
-                    {(!denseChart || count > 0) && (
-                      <span className="text-xs font-bold text-[#105cae]">
-                        {count > 0 ? count : ""}
-                      </span>
-                    )}
-                    <div
-                      className="w-full max-w-12 rounded-t-md bg-[#105cae]"
-                      style={{
-                        height: `${Math.max(count > 0 ? 12 : 3, (count / maxDaily) * 120)}px`,
-                        opacity: count > 0 ? 1 : 0.25,
-                      }}
-                    />
+                    <div className="flex w-full items-end justify-center gap-0.5">
+                      {([
+                        { value: media, color: "#ee7729" },
+                        { value: social, color: "#105cae" },
+                      ] as const).map(({ value, color }) => (
+                        <div
+                          key={color}
+                          className="w-full max-w-5 rounded-t-md"
+                          style={{
+                            backgroundColor: color,
+                            height: `${Math.max(value > 0 ? 10 : 3, (value / maxDaily) * 120)}px`,
+                            opacity: value > 0 ? 1 : 0.2,
+                          }}
+                        />
+                      ))}
+                    </div>
                     {labelForBar(index) && (
                       <span className="truncate text-[10px] font-semibold text-[var(--muted)]">
                         {label}
@@ -580,37 +653,29 @@ export default function ReportView({
               </ReportPanel>
             </div>
 
-            <ReportPanel title="Top publishers">
-              {report.topOutlets.length ? (
-                <ol className="divide-y divide-[#e8e5e2]">
-                  {report.topOutlets.map(({ source, count }, index) => (
-                    <li key={source} className="flex items-center gap-3 py-2.5">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#e3edf9] text-sm font-bold text-[#105cae]">
-                        {index + 1}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm font-semibold">
-                        {source}
-                      </span>
-                      <div className="h-2 w-24 overflow-hidden rounded-full bg-[#e4e1de]">
-                        <div
-                          className="h-full rounded-full bg-[#105cae]"
-                          style={{ width: `${(count / maxOutlet) * 100}%` }}
-                        />
-                      </div>
-                      <strong className="w-6 text-right text-[#105cae]">
-                        {count}
-                      </strong>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <EmptyState>No publishers recorded in this period.</EmptyState>
-              )}
-            </ReportPanel>
+            <div className="space-y-5">
+              <ReportPanel title="Top media outlets">
+                <OutletRanking
+                  rows={report.topOutlets}
+                  color="#ee7729"
+                  empty="No traditional-media outlets recorded in this period."
+                />
+              </ReportPanel>
+              <ReportPanel title="Top social accounts">
+                <OutletRanking
+                  rows={report.topSocialAccounts}
+                  color="#105cae"
+                  empty="No social accounts recorded in this period."
+                />
+              </ReportPanel>
+            </div>
           </div>
 
-          <div className="mt-5">
-            <SentimentMeter mix={sentimentMix} />
+          {/* Two dials, matching the deck: media and social are scored and
+              reported separately, never averaged into one number. */}
+          <div className="mt-5 grid gap-5 lg:grid-cols-2">
+            <SentimentMeter mix={mediaSentiment} title="Media sentiment" />
+            <SentimentMeter mix={socialSentiment} title="Social media sentiment" />
           </div>
         </section>
 
@@ -703,11 +768,27 @@ export default function ReportView({
                     {item.title}
                   </h3>
                   <p className="mt-2 text-xs font-semibold text-[var(--muted)]">
-                    {item.source} · {formatItemDate(item)}
+                    {item.source}
+                    {item.byline && ` · ${item.byline}`} · {formatItemDate(item)}
+                    {engagementLabel(item) && ` · ${engagementLabel(item)}`}
                   </p>
-                  {item.snippet && (
+                  {/* The transcript is the verbatim on-air wording, so it is
+                      quoted rather than paraphrased into the snippet prose. */}
+                  {item.transcript ? (
+                    <blockquote className="mt-3 border-l-[3px] border-[#ee7729] pl-3 text-sm italic leading-6 text-[#44546a]">
+                      &ldquo;…{item.transcript}…&rdquo;
+                    </blockquote>
+                  ) : (
+                    item.snippet && (
+                      <p className="mt-3 text-sm leading-6 text-[#44546a]">
+                        {item.snippet}
+                      </p>
+                    )
+                  )}
+                  {item.label === "related" && item.reason && (
                     <p className="mt-3 text-sm leading-6 text-[#44546a]">
-                      {item.snippet}
+                      <span className="font-bold text-[#105cae]">Relevance:</span>{" "}
+                      {item.reason}
                     </p>
                   )}
                   <ClipPlayer item={item} />
@@ -839,6 +920,49 @@ function Metric({ label, value }: { label: string; value: number }) {
   );
 }
 
+/**
+ * Ranked list of sources. Used twice — once for traditional-media outlets and
+ * once for social accounts — which are deliberately never merged into a single
+ * "publishers" ranking.
+ */
+function OutletRanking({
+  rows,
+  color,
+  empty,
+}: {
+  rows: Array<{ source: string; count: number }>;
+  color: string;
+  empty: string;
+}) {
+  if (!rows.length) {
+    return <EmptyState>{empty}</EmptyState>;
+  }
+  const max = Math.max(1, ...rows.map((row) => row.count));
+  return (
+    <ol className="divide-y divide-[#e8e5e2]">
+      {rows.map(({ source, count }, index) => (
+        <li key={source} className="flex items-center gap-3 py-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#efedea] text-sm font-bold text-[#44546a]">
+            {index + 1}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {source}
+          </span>
+          <div className="h-2 w-24 overflow-hidden rounded-full bg-[#e4e1de]">
+            <div
+              className="h-full rounded-full"
+              style={{ width: `${(count / max) * 100}%`, backgroundColor: color }}
+            />
+          </div>
+          <strong className="w-6 text-right" style={{ color }}>
+            {count}
+          </strong>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function MixBars({
   rows,
   total,
@@ -888,18 +1012,31 @@ function isBucket(value: string | null): value is Bucket {
 function applySentimentEdits(
   report: Report,
   edits: Record<string, string | null>,
+  scope: "all" | "media" | "social" = "all",
 ): SentimentMix {
+  const base =
+    scope === "media"
+      ? report.mediaSentiment
+      : scope === "social"
+        ? report.socialSentiment
+        : report.sentiment;
   const entries = Object.entries(edits);
   if (entries.length === 0) {
-    return report.sentiment;
+    return base;
   }
 
-  const mix = { ...report.sentiment };
+  const mix = { ...base };
   for (const [id, next] of entries) {
     const item = report.items.find((candidate) => candidate.id === id);
     if (!item) {
       continue;
     }
+    // An edit only moves the gauge it belongs to — media edits must not shift
+    // the social dial, and vice versa.
+    const isSocialItem = item.sourceType === "social";
+    if (scope === "media" && isSocialItem) continue;
+    if (scope === "social" && !isSocialItem) continue;
+
     const previous = item.sentiment;
     if (previous === next) {
       continue;
@@ -921,9 +1058,11 @@ function applySentimentEdits(
     }
   }
 
-  mix.net = mix.scored
-    ? Math.round(((mix.positive - mix.negative) / mix.scored) * 100)
-    : null;
+  const lean = mix.scored
+    ? (mix.positive - mix.negative) / mix.scored
+    : 0;
+  mix.net = mix.scored ? Math.round(lean * 100) : null;
+  mix.score = mix.scored ? Math.round((50 + 50 * lean) * 10) / 10 : null;
   return mix;
 }
 
@@ -933,7 +1072,13 @@ function applySentimentEdits(
  * remainder is stated plainly underneath, so the meter can't imply more
  * assessment than actually happened.
  */
-function SentimentMeter({ mix }: { mix: SentimentMix }) {
+function SentimentMeter({
+  mix,
+  title = "Sentiment toward the 66 Express",
+}: {
+  mix: SentimentMix;
+  title?: string;
+}) {
   const segments = [
     { key: "positive", label: "Positive", count: mix.positive, color: "#1a7f4b" },
     { key: "neutral", label: "Neutral", count: mix.neutral, color: "#8a8580" },
@@ -943,7 +1088,7 @@ function SentimentMeter({ mix }: { mix: SentimentMix }) {
     mix.scored ? Math.round((count / mix.scored) * 100) : 0;
 
   return (
-    <ReportPanel title="Sentiment toward the 66 Express">
+    <ReportPanel title={title}>
       {mix.scored === 0 ? (
         <EmptyState>
           No coverage scored for sentiment in this period.
@@ -953,10 +1098,14 @@ function SentimentMeter({ mix }: { mix: SentimentMix }) {
           <div className="flex items-end justify-between gap-4">
             <div>
               <div className="text-3xl font-extrabold leading-none text-[#105cae]">
-                {mix.net! > 0 ? `+${mix.net}` : mix.net}
+                {mix.score}
+                <span className="text-lg font-semibold text-[var(--muted)]">
+                  {" "}
+                  / 100
+                </span>
               </div>
-              <div className="mt-1 text-xs uppercase tracking-wide text-[var(--muted)]">
-                Net sentiment
+              <div className="mt-1 text-xs font-bold uppercase tracking-wide text-[#105cae]">
+                {sentimentBand(mix.score)}
               </div>
             </div>
             <div className="text-right text-sm text-[var(--muted)]">
@@ -968,6 +1117,18 @@ function SentimentMeter({ mix }: { mix: SentimentMix }) {
                 </>
               ) : null}
             </div>
+          </div>
+
+          {/* 0–100 dial: the needle sits where the deck's gauge would point. */}
+          <div className="relative mt-4 h-2.5 overflow-hidden rounded-full bg-gradient-to-r from-[#c0392b] via-[#e4e1de] to-[#1a7f4b]">
+            <div
+              className="absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#141413] ring-2 ring-white"
+              style={{ left: `${mix.score}%` }}
+            />
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">
+            <span>0 · Negative</span>
+            <span>100 · Positive</span>
           </div>
 
           <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-[#e4e1de]">

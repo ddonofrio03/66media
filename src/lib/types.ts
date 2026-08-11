@@ -23,6 +23,22 @@ export type RelevanceLabel =
   | "related"
   | "noise";
 
+/**
+ * Audience response to a social post, as reported by the platform. Feeds the
+ * "social echo" ranking in the reports — Meltwater's term for how far a mention
+ * travelled beyond its original posting.
+ *
+ * Every field is optional because each provider exposes a different subset (X
+ * gives all four, LinkedIn gives reactions/comments only, and so on). Absent is
+ * meaningfully different from zero, so never default these to 0.
+ */
+export type Engagement = {
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  views?: number;
+};
+
 export type DigestItem = {
   id: string;
   title: string;
@@ -34,6 +50,13 @@ export type DigestItem = {
   reason: string;
   snippet: string;
   publishedAt: string;
+  /** Reporter/author credit, when the feed supplies one (RSS dc:creator). */
+  byline?: string;
+  /** Verbatim on-air excerpt from a caption match — quoted in the deck. */
+  transcript?: string;
+  /** Deep link to the moment of the mention, for playable-clip embeds. */
+  clipUrl?: string;
+  engagement?: Engagement;
 };
 
 export type DigestSnapshot = {

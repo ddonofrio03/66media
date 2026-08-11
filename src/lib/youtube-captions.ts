@@ -102,6 +102,11 @@ async function enrichOne(item: RawItem, terms: string[]): Promise<void> {
   const seconds = Math.max(0, Math.floor(hit.startMs / 1000) - 5);
   item.url = `${item.url}${item.url.includes("?") ? "&" : "?"}t=${seconds}s`;
   item.snippet = `On-air transcript match ("${hit.term}"): "...${hit.excerpt}..."`;
+  // Keep the excerpt and the deep link as their own fields too: the report
+  // quotes the transcript verbatim and embeds the clip, and neither should
+  // have to parse them back out of the snippet prose.
+  item.transcript = hit.excerpt;
+  item.clipUrl = item.url;
 }
 
 type CaptionEvent = { tStartMs?: number; segs?: Array<{ utf8?: string }> };

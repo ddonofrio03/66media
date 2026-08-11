@@ -4,6 +4,9 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SentimentControl from "@/components/sentiment-control";
 import type { Report, ReportItem, SentimentMix } from "@/lib/report";
+// Safe to import as a value: lib/outlets is pure reference data with no server
+// dependencies, unlike lib/report (which opens the Supabase client).
+import { formatReach, reachFor } from "@/lib/outlets";
 
 /**
  * Client-side report document. Data (Eastern-time day buckets, relevance mix,
@@ -198,7 +201,9 @@ function downloadCsv(report: Report) {
     "Relevance",
     "Priority",
     "Sentiment",
+    "Sentiment score (0-100)",
     "Sentiment set by",
+    "Est. reach",
     "Likes",
     "Comments",
     "Shares",
@@ -217,11 +222,14 @@ function downloadCsv(report: Report) {
     LABEL_LABELS[item.label] ?? item.label,
     item.priority,
     item.sentiment ?? "not scored",
+    item.sentimentScore ?? "",
     item.sentimentSource === "manual"
       ? "analyst"
       : item.sentimentSource === "auto"
         ? "automatic"
         : "",
+    // Blank, not 0 — an outlet with no estimate is unknown, not unread.
+    item.sourceType === "social" ? "" : (reachFor(item.source) ?? ""),
     // Blank, not 0 — the platform not reporting a count is not zero engagement.
     item.engagement?.likes ?? "",
     item.engagement?.comments ?? "",
@@ -759,6 +767,82 @@ export default function ReportView({
           </div>
         </section>
 
+        {/* Reach and amplification */}
+        <section className="report-page p-5 md:p-10">
+          <p className="report-kicker">Amplification</p>
+          <h2 className="report-heading">How far did coverage travel?</h2>
+          <div className="brand-rule"><span /><span /><span /></div>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--muted)]">
+            Reach is an <strong>estimate</strong> of the audience for each
+            mention, based on outlet size — not licensed audience measurement.
+            Use it to compare mentions against each other, not as a hard
+            figure. Social echo is the platforms&rsquo; own counts.
+          </p>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            <Metric
+              label="Est. media reach"
+              display={formatReach(report.reach.total)}
+              value={report.reach.total}
+            />
+            <Metric
+              label="Mentions estimated"
+              display={`${report.reach.estimated} of ${report.reach.estimated + report.reach.unestimated}`}
+              value={report.reach.estimated}
+            />
+            <Metric
+              label="Total social echo"
+              value={report.topByEcho.reduce((sum, row) => sum + row.echo, 0)}
+            />
+          </div>
+
+          {report.reach.unestimated > 0 && (
+            <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
+              {report.reach.unestimated} mention
+              {report.reach.unestimated === 1 ? " has" : "s have"} no reach
+              estimate and {report.reach.unestimated === 1 ? "is" : "are"}{" "}
+              excluded from the total rather than counted as zero. Add the
+              outlet to <code>src/lib/outlets.ts</code> to include{" "}
+              {report.reach.unestimated === 1 ? "it" : "them"}.
+            </p>
+          )}
+
+          <div className="mt-6 grid gap-5 lg:grid-cols-2">
+            <ReportPanel title="Top mentions by estimated reach">
+              <RankedMentions
+                rows={report.topByReach.map(({ item, reach }) => ({
+                  item,
+                  value: formatReach(reach),
+                }))}
+                empty="No mentions from outlets with a reach estimate."
+              />
+            </ReportPanel>
+            <ReportPanel title="Top mentions by social echo">
+              <RankedMentions
+                rows={report.topByEcho.map(({ item, echo }) => ({
+                  item,
+                  value: echo.toLocaleString("en-US"),
+                }))}
+                empty="No engagement counts captured yet — these populate as new posts are collected."
+              />
+            </ReportPanel>
+          </div>
+
+          <div className="mt-5">
+            <ReportPanel title="Top outlets by estimated reach">
+              <OutletRanking
+                rows={report.topOutletsByReach.map((row) => ({
+                  source: `${row.source} (${row.count} mention${row.count === 1 ? "" : "s"})`,
+                  count: row.reach,
+                }))}
+                color="#ee7729"
+                format={formatReach}
+                empty="No outlets with a reach estimate in this period."
+              />
+            </ReportPanel>
+          </div>
+        </section>
+
         {/* Social pulse */}
         <section className="report-page p-5 md:p-10">
           <p className="report-kicker">Social media</p>
@@ -988,11 +1072,20 @@ export default function ReportView({
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({
+  label,
+  value,
+  display,
+}: {
+  label: string;
+  value: number;
+  /** Overrides the default thousands-separated rendering (e.g. "1.2M"). */
+  display?: string;
+}) {
   return (
     <div className="report-section rounded-2xl border border-[#d0ccc9] bg-white p-5 shadow-sm">
       <strong className="block text-4xl font-semibold tracking-tight text-[#105cae]">
-        {value.toLocaleString("en-US")}
+        {display ?? value.toLocaleString("en-US")}
       </strong>
       <span className="mt-2 block text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
         {label}
@@ -1010,10 +1103,13 @@ function OutletRanking({
   rows,
   color,
   empty,
+  format,
 }: {
   rows: Array<{ source: string; count: number }>;
   color: string;
   empty: string;
+  /** Renders the trailing figure; defaults to the raw count. */
+  format?: (value: number) => string;
 }) {
   if (!rows.length) {
     return <EmptyState>{empty}</EmptyState>;
@@ -1035,8 +1131,54 @@ function OutletRanking({
               style={{ width: `${(count / max) * 100}%`, backgroundColor: color }}
             />
           </div>
-          <strong className="w-6 text-right" style={{ color }}>
-            {count}
+          <strong
+            className="w-12 shrink-0 text-right tabular-nums"
+            style={{ color }}
+          >
+            {format ? format(count) : count}
+          </strong>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * Ranked mention list with a trailing figure — used for both the reach and
+ * echo tables, which differ only in what that figure means.
+ */
+function RankedMentions({
+  rows,
+  empty,
+}: {
+  rows: Array<{ item: ReportItem; value: string }>;
+  empty: string;
+}) {
+  if (!rows.length) {
+    return <EmptyState>{empty}</EmptyState>;
+  }
+  return (
+    <ol className="divide-y divide-[#e8e5e2]">
+      {rows.map(({ item, value }, index) => (
+        <li key={item.id} className="flex items-start gap-3 py-2.5">
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#efedea] text-xs font-bold text-[#44546a]">
+            {index + 1}
+          </span>
+          <div className="min-w-0 flex-1">
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-sm font-semibold leading-5 text-[#123a63] hover:underline"
+            >
+              {item.title}
+            </a>
+            <span className="mt-0.5 block text-xs text-[var(--muted)]">
+              {item.source} · {formatItemDate(item)}
+            </span>
+          </div>
+          <strong className="shrink-0 text-sm tabular-nums text-[#105cae]">
+            {value}
           </strong>
         </li>
       ))}
@@ -1253,7 +1395,7 @@ function SentimentMeter({
             <span>100 · Positive</span>
           </div>
 
-          {/* Provenance: never let a hand-set dial silently masquerade as the
+          {/* Provenance: never let a hand-set dial silently pass as the
               measured one. */}
           {onOverride && override !== null && override !== undefined ? (
             <p className="no-print mt-2 text-xs leading-5 text-[var(--muted)]">

@@ -1,6 +1,7 @@
 import { socialPlatform } from "@/lib/digest";
 import { getSupabase } from "@/lib/db";
 import type { Engagement } from "@/lib/types";
+import { reachFor } from "@/lib/outlets";
 
 /**
  * Weekly + monthly earned-media reports built from the digest_items archive —
@@ -50,12 +51,34 @@ export type ReportItem = {
   engagement: Engagement | null;
 };
 
-/** Total onward reach of a post — the "social echo" ranking key. */
-export function echoScore(item: ReportItem): number {
+/**
+ * Total onward response to a post — the "social echo" ranking key. Null when
+ * the platform reported nothing, which is not the same as an ignored post.
+ */
+export function echoScore(item: ReportItem): number | null {
   const e = item.engagement;
-  if (!e) return 0;
-  return (e.likes ?? 0) + (e.comments ?? 0) + (e.shares ?? 0);
+  if (!e) return null;
+  const parts = [e.likes, e.comments, e.shares].filter(
+    (value): value is number => value !== undefined,
+  );
+  return parts.length ? parts.reduce((sum, value) => sum + value, 0) : null;
 }
+
+/** Estimated audience for a mention. Null when the outlet has no estimate. */
+export function reachOf(item: ReportItem): number | null {
+  return isSocial(item) ? null : reachFor(item.source);
+}
+
+/**
+ * Estimated-reach totals. `unestimated` is stated rather than hidden: a report
+ * that says "1.2M across 14 of 19 mentions" is honest, one that silently treats
+ * the other 5 as zero is not.
+ */
+export type ReachSummary = {
+  total: number;
+  estimated: number;
+  unestimated: number;
+};
 
 /**
  * Sentiment toward the 66 Express across the range. `scored` is the
@@ -189,6 +212,14 @@ export type Report = {
   topOutlets: Array<{ source: string; count: number }>;
   /** Social accounts only, ranked by post count. */
   topSocialAccounts: Array<{ source: string; count: number }>;
+  /** Estimated total audience across traditional-media mentions. */
+  reach: ReachSummary;
+  /** Media mentions ranked by the estimated reach of their outlet. */
+  topByReach: Array<{ item: ReportItem; reach: number }>;
+  /** Outlets ranked by total estimated reach (mentions x per-mention reach). */
+  topOutletsByReach: Array<{ source: string; count: number; reach: number }>;
+  /** Social posts ranked by likes + comments + shares. */
+  topByEcho: Array<{ item: ReportItem; echo: number }>;
   /** Per-day totals, split into the two series the overview chart plots. */
   daily: Array<{ label: string; count: number; media: number; social: number }>;
   // Ranked best-first: important, then confirmed, likely, the rest. The full
@@ -399,6 +430,10 @@ export async function getReport(
     byLabel: [],
     topOutlets: [],
     topSocialAccounts: [],
+    reach: { total: 0, estimated: 0, unestimated: 0 },
+    topByReach: [],
+    topOutletsByReach: [],
+    topByEcho: [],
     daily: [],
     items: [],
     importantCount: 0,
@@ -540,6 +575,45 @@ export async function getReport(
       .sort((a, b) => b.count - a.count),
     topOutlets: ranked(outletCounts, 12),
     topSocialAccounts: ranked(accountCounts, 12),
+    reach: (() => {
+      let total = 0;
+      let estimated = 0;
+      for (const item of mediaItems) {
+        const value = reachOf(item);
+        if (value === null) continue;
+        total += value;
+        estimated++;
+      }
+      return {
+        total,
+        estimated,
+        unestimated: mediaItems.length - estimated,
+      };
+    })(),
+    topByReach: mediaItems
+      .map((item) => ({ item, reach: reachOf(item) }))
+      .filter((row): row is { item: ReportItem; reach: number } =>
+        row.reach !== null,
+      )
+      .sort((a, b) => b.reach - a.reach)
+      .slice(0, 10),
+    topOutletsByReach: (() => {
+      // Total reach per outlet = its per-mention estimate x how often it ran.
+      const rows: Array<{ source: string; count: number; reach: number }> = [];
+      for (const [source, count] of outletCounts) {
+        const per = reachFor(source);
+        if (per === null) continue;
+        rows.push({ source, count, reach: per * count });
+      }
+      return rows.sort((a, b) => b.reach - a.reach).slice(0, 10);
+    })(),
+    topByEcho: socialItems
+      .map((item) => ({ item, echo: echoScore(item) }))
+      .filter((row): row is { item: ReportItem; echo: number } =>
+        row.echo !== null && row.echo > 0,
+      )
+      .sort((a, b) => b.echo - a.echo)
+      .slice(0, 10),
     daily: range.dayKeys.map((key) => {
       const day = dayCounts.get(key) ?? { media: 0, social: 0 };
       return {

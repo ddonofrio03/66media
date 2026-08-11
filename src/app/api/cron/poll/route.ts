@@ -29,6 +29,17 @@ import { getSources } from "@/lib/sources";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+/** Project ref from SUPABASE_URL (https://<ref>.supabase.co), or a marker. */
+function supabaseRef(): string {
+  const url = process.env.SUPABASE_URL;
+  if (!url) return "not configured";
+  try {
+    return new URL(url).hostname.split(".")[0] || "unrecognized";
+  } catch {
+    return "unparseable";
+  }
+}
+
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -69,6 +80,11 @@ export async function GET(request: Request) {
   // run can positively confirm "enabled and returning N raw posts" vs.
   // "credential missing" (both otherwise look like silent zeroes).
   const socialConfig = {
+    // Which Supabase project this deployment actually writes to. The ref is the
+    // hostname, not a credential — but it is the one thing you cannot recover
+    // from the Vercel dashboard once SUPABASE_URL is marked Sensitive, and it
+    // is what you need to find the right project to run a migration in.
+    supabaseRef: supabaseRef(),
     xOfficial: isXOfficialEnabled(),
     bluesky: Boolean(
       process.env.BLUESKY_IDENTIFIER && process.env.BLUESKY_APP_PASSWORD,

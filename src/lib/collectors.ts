@@ -564,7 +564,7 @@ function outletKey(item: RawItem) {
   return normalizeHost(item.domain || item.url) || source || "unknown";
 }
 
-function createStableId(url: string, title: string) {
+export function createStableId(url: string, title: string) {
   const normalizedUrl = normalizeUrl(url);
   if (normalizedUrl) {
     return normalizedUrl;

@@ -8,7 +8,8 @@ type Section =
   | "sources"
   | "settings"
   | "preview"
-  | "reports";
+  | "reports"
+  | "add";
 
 const LINKS: Array<{ key: Section; href: string; label: string }> = [
   { key: "dashboard", href: "/", label: "Dashboard" },
@@ -18,6 +19,7 @@ const LINKS: Array<{ key: Section; href: string; label: string }> = [
   { key: "settings", href: "/settings", label: "Keywords" },
   { key: "preview", href: "/preview", label: "Digest Preview" },
   { key: "reports", href: "/reports", label: "Reports" },
+  { key: "add", href: "/add", label: "Add Mention" },
 ];
 
 export default function SiteNav({ active }: { active?: Section }) {

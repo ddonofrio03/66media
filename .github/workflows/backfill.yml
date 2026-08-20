@@ -1,0 +1,34 @@
+# One-shot recovery of Facebook posts Apify already scraped and billed for.
+#
+# Run it from the Actions tab: "Recover Facebook backlog" -> Run workflow.
+# The response is printed in the job log, so you can see exactly how many runs
+# were read and how many posts cleared the relevance classifier.
+#
+# Safe to run more than once: items carry stable ids, so a repeat run
+# re-upserts the same rows rather than duplicating them.
+name: Recover Facebook backlog
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How far back to look for finished Apify runs"
+        type: string
+        default: "7"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Pull the unread Apify datasets
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET repo secret is not set — nothing to do."
+            exit 1
+          fi
+          curl -fsS --max-time 120 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://66media.vercel.app/api/cron/backfill-apify?days=${{ inputs.days }}"

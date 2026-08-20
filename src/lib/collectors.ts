@@ -174,6 +174,24 @@ export async function collectDigestItems(
   };
 }
 
+/**
+ * Dedupe + classify raw items with NO time-window filter.
+ *
+ * Backfill only. Every live path drops anything outside the 36-hour lookback,
+ * which is correct for a digest and wrong for recovering week-old posts that
+ * were already scraped and billed for.
+ */
+export function classifyBackfillItems(
+  items: RawItem[],
+  sources: Source[],
+  settings: MonitoringSettings = DEFAULT_SETTINGS,
+): DigestItem[] {
+  return dedupeRawItems(items)
+    .map((item) => classifyItem(item, sources, settings))
+    .filter((item): item is DigestItem => Boolean(item))
+    .sort(sortDigestItems);
+}
+
 async function collectGoogleNewsItems(queries: string[]): Promise<RawItem[]> {
   if (queries.length === 0) {
     return [];

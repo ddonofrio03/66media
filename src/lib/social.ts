@@ -236,6 +236,103 @@ async function fetchDatasetItems(
   return Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 }
 
+/** Recent runs of one actor, newest first, straight from Apify's own history. */
+async function listActorRuns(
+  actorId: string,
+  token: string,
+  limit: number,
+): Promise<
+  Array<{ runId: string; datasetId: string; status: string; startedAt: string }>
+> {
+  const url = new URL(`${APIFY_BASE}/acts/${actorId.replace("/", "~")}/runs`);
+  url.searchParams.set("token", token);
+  url.searchParams.set("desc", "true");
+  url.searchParams.set("limit", String(limit));
+
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Apify ${actorId} run list responded ${response.status}`);
+  }
+  const body = (await response.json()) as {
+    data?: { items?: Array<Record<string, unknown>> };
+  };
+
+  return (body.data?.items ?? [])
+    .map((run) => ({
+      runId: str(run.id),
+      datasetId: str(run.defaultDatasetId),
+      status: str(run.status),
+      startedAt: str(run.startedAt),
+    }))
+    .filter((run) => run.runId && run.datasetId);
+}
+
+/**
+ * Recover the results of Facebook runs that finished before the deferred-run
+ * plumbing existed.
+ *
+ * From 08-11 to 08-20 every watchlist run was killed at 40s and its dataset
+ * discarded unread — roughly 200 posts a day that Apify had already billed
+ * for. Those datasets are still sitting in Apify, so this walks the actor's
+ * own run history and pulls them back. Idempotent: items carry stable ids, so
+ * re-running just re-upserts the same rows.
+ */
+export async function backfillFacebookRuns(
+  sinceDays = 7,
+  maxRuns = 40,
+): Promise<{ items: RawItem[]; runs: number; rawPosts: number }> {
+  if (!isEnabled()) {
+    return { items: [], runs: 0, rawPosts: 0 };
+  }
+
+  const token = process.env.APIFY_TOKEN as string;
+  const cutoff = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
+  const runs = await listActorRuns(FB_ACTOR, token, maxRuns);
+
+  const items: RawItem[] = [];
+  let used = 0;
+  let rawPosts = 0;
+
+  for (const run of runs) {
+    const startedAt = Date.parse(run.startedAt);
+    if (Number.isFinite(startedAt) && startedAt < cutoff) {
+      continue;
+    }
+    // A TIMED-OUT run is exactly what we are here for — it holds everything
+    // the actor scraped before we cut it off.
+    if (!TERMINAL_RUN_STATES.has(run.status)) {
+      continue;
+    }
+
+    try {
+      const raw = await fetchDatasetItems(run.datasetId, token, TOTAL_CAP);
+      rawPosts += raw.length;
+      const mapped = raw.map(mapFacebookPagePost).filter((item) => item.url);
+      items.push(...mapped);
+      used += 1;
+
+      // Leave an audit row so a second backfill is a visible no-op rather than
+      // a silent re-read.
+      await recordApifyRun({
+        runId: run.runId,
+        actor: FB_ACTOR,
+        provider: FB_PAGES_PROVIDER,
+        datasetId: run.datasetId,
+      });
+      await markApifyRunCollected(run.runId, run.status, mapped.length);
+
+      console.log(
+        `[social] backfilled run ${run.runId} (${run.status}, ${run.startedAt}): ` +
+          `${raw.length} raw -> ${mapped.length} items.`,
+      );
+    } catch (error) {
+      console.warn(`[social] backfill failed for run ${run.runId}:`, error);
+    }
+  }
+
+  return { items: dedupeByUrl(items), runs: used, rawPosts };
+}
+
 /** Which RawItem mapper a stored run's results should go through. */
 function mapperFor(
   provider: string,

@@ -4,7 +4,7 @@ import {
   DEFAULT_SETTINGS,
   type MonitoringSettings,
 } from "@/lib/monitoring-settings";
-import { collectSocialItems } from "@/lib/social";
+import { collectSocialItems, drainPendingApifyRuns } from "@/lib/social";
 import { collectBlueskyItems } from "@/lib/bluesky";
 import { collectXOfficialItems, isXOfficialEnabled } from "@/lib/x-official";
 import { enrichYouTubeTranscripts } from "@/lib/youtube-captions";
@@ -101,6 +101,12 @@ export async function collectDigestItems(
     // the official X API bills per unique post with 24h dedup, so frequent
     // polling costs cents (gated on X_BEARER_TOKEN, silent [] otherwise).
     { name: "Bluesky", run: () => collectBlueskyItems() },
+    // Results of Apify runs a previous digest started. Reading a finished
+    // dataset costs nothing — Apify billed for those posts the moment it
+    // produced them — so this runs on every collection, poller included. It is
+    // how Facebook actually gets in: the watchlist scrape is started daily and
+    // lands here 10-20 minutes later.
+    { name: "Apify (deferred)", run: () => drainPendingApifyRuns() },
   ];
   if (isXOfficialEnabled()) {
     providers.push({

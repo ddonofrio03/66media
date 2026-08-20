@@ -148,6 +148,34 @@ create table if not exists public.monitoring_settings (
   constraint monitoring_settings_singleton check (id = 1)
 );
 
+-- Apify actor runs started by one request and read by a later one.
+--
+-- The Facebook watchlist scrape outlives any serverless request, so the digest
+-- starts the actor and records the run here; the 10-minute poller drains the
+-- dataset once it finishes. Apify bills per result as the actor produces them,
+-- so a run we start and never read is money spent on nothing — this table is
+-- what guarantees we come back for it.
+--
+-- Migration for pre-existing databases (run once in the SQL editor): this
+-- whole block, it only adds a new table.
+create table if not exists public.apify_runs (
+  run_id       text primary key,   -- Apify run id
+  actor        text not null,      -- e.g. apify/facebook-posts-scraper
+  provider     text not null,      -- picks the RawItem mapper on drain
+  dataset_id   text not null,      -- defaultDatasetId of the run
+  started_at   timestamptz not null default now(),
+  -- null = still owed to us. Set for any terminal run, including TIMED-OUT
+  -- and ABORTED ones: those still hold a partial dataset we already paid for.
+  collected_at timestamptz,
+  status       text,               -- terminal Apify status at drain time
+  item_count   integer             -- usable RawItems the drain produced
+);
+
+create index if not exists apify_runs_pending_idx
+  on public.apify_runs (started_at)
+  where collected_at is null;
+
 alter table public.digest_items enable row level security;
 alter table public.digest_sends enable row level security;
 alter table public.monitoring_settings enable row level security;
+alter table public.apify_runs enable row level security;

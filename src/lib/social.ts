@@ -2,6 +2,11 @@ import type { MonitoringSettings } from "@/lib/monitoring-settings";
 import type { RawItem } from "@/lib/collectors";
 import type { Engagement } from "@/lib/types";
 import { isXOfficialEnabled } from "@/lib/x-official";
+import {
+  listPendingApifyRuns,
+  markApifyRunCollected,
+  recordApifyRun,
+} from "@/lib/apify-runs";
 
 // Apify pay-per-result social collector. X (Twitter) keyword search is the
 // backbone; Facebook open keyword search is best-effort (FB has no usable
@@ -104,12 +109,203 @@ const X_BROAD_QUERIES = [
 // the route's maxDuration (60s) so a slow scrape degrades to "no social this
 // run" instead of timing out the whole digest. The actor's own run is also
 // killed server-side at this bound via the `timeout` query param.
+//
+// Only the small, fast actors (X, LinkedIn pages) still run this way. Facebook
+// does NOT — see startActor below.
 const ACTOR_TIMEOUT_MS = 40_000;
+
+// How long we'll wait on the *start* call for a deferred run. Apify returns the
+// run id immediately, so this only guards a hung connection.
+const ACTOR_START_TIMEOUT_MS = 15_000;
+
+// Server-side ceiling for a deferred run. Nothing is waiting on the request
+// side any more, so this can be generous — it exists to stop a wedged actor
+// from billing forever, not to fit inside a request.
+const ACTOR_RUN_TIMEOUT_SECONDS = 300;
+
+// Apify run states that will never change again. A run in any of these is safe
+// to drain — including the failure states, because a TIMED-OUT or ABORTED run
+// still leaves behind every result it produced before it stopped, and we were
+// billed for those.
+const TERMINAL_RUN_STATES = new Set([
+  "SUCCEEDED",
+  "FAILED",
+  "ABORTED",
+  "TIMED-OUT",
+]);
+
+// Give up waiting on a run this old and drain whatever its dataset holds. Guards
+// against a run whose status we can never read (deleted, token rotated) pinning
+// a row as pending forever.
+const PENDING_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+// Provider labels. These are stored on the run row and pick the mapper when the
+// dataset is drained later, so changing one is a data migration — not a rename.
+const FB_PAGES_PROVIDER = "Facebook (Apify)";
+const FB_GROUPS_PROVIDER = "Facebook groups (Apify)";
 
 function isEnabled(): boolean {
   return (
     process.env.SOCIAL_ENABLED === "true" && Boolean(process.env.APIFY_TOKEN)
   );
+}
+
+/**
+ * Start an actor WITHOUT waiting for it, and remember the run so a later
+ * request can collect the results.
+ *
+ * This is the fix for the Facebook watchlist: `run-sync-get-dataset-items`
+ * returns data only for a run that SUCCEEDED, and a 23-page scrape cannot
+ * finish inside a serverless request. Bounding it with `?timeout=40` meant
+ * Apify killed the run every single time, the sync call errored, and ~200
+ * already-billed posts a day were thrown away. Starting the run instead
+ * decouples the scrape from the request entirely.
+ */
+async function startActor(
+  actorId: string,
+  input: Record<string, unknown>,
+  token: string,
+  maxItems: number,
+  provider: string,
+): Promise<void> {
+  const url = new URL(
+    `${APIFY_BASE}/acts/${actorId.replace("/", "~")}/runs`,
+  );
+  url.searchParams.set("token", token);
+  url.searchParams.set("maxItems", String(maxItems));
+  url.searchParams.set("timeout", String(ACTOR_RUN_TIMEOUT_SECONDS));
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ACTOR_START_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Apify ${actorId} start responded ${response.status}`);
+    }
+    const body = (await response.json()) as {
+      data?: { id?: string; defaultDatasetId?: string };
+    };
+    const runId = body.data?.id;
+    const datasetId = body.data?.defaultDatasetId;
+    if (!runId || !datasetId) {
+      throw new Error(`Apify ${actorId} start returned no run id`);
+    }
+
+    await recordApifyRun({ runId, actor: actorId, provider, datasetId });
+    console.log(`[social] started ${provider} run ${runId} (deferred).`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Current status of a run, e.g. RUNNING / SUCCEEDED / TIMED-OUT. */
+async function getRunState(runId: string, token: string): Promise<string> {
+  const url = new URL(`${APIFY_BASE}/actor-runs/${runId}`);
+  url.searchParams.set("token", token);
+
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Apify run ${runId} status responded ${response.status}`);
+  }
+  const body = (await response.json()) as { data?: { status?: string } };
+  return body.data?.status ?? "UNKNOWN";
+}
+
+/** Everything a finished run left in its dataset. */
+async function fetchDatasetItems(
+  datasetId: string,
+  token: string,
+  limit: number,
+): Promise<Array<Record<string, unknown>>> {
+  const url = new URL(`${APIFY_BASE}/datasets/${datasetId}/items`);
+  url.searchParams.set("token", token);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("clean", "true");
+
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Apify dataset ${datasetId} responded ${response.status}`);
+  }
+  const data = (await response.json()) as unknown;
+  return Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
+}
+
+/** Which RawItem mapper a stored run's results should go through. */
+function mapperFor(
+  provider: string,
+): ((post: Record<string, unknown>) => RawItem) | null {
+  switch (provider) {
+    case FB_PAGES_PROVIDER:
+      return mapFacebookPagePost;
+    case FB_GROUPS_PROVIDER:
+      return mapFacebookGroupPost;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Collect the results of actor runs an earlier request started.
+ *
+ * Runs on EVERY collection, poller included — unlike starting an actor, this
+ * costs nothing. The results were billed when Apify produced them, so reading
+ * a finished dataset is free and the only question is whether we bother to.
+ *
+ * Best-effort per run: one unreadable run is logged and skipped rather than
+ * failing the drain for the others.
+ */
+export async function drainPendingApifyRuns(): Promise<RawItem[]> {
+  if (!isEnabled()) {
+    return [];
+  }
+
+  const token = process.env.APIFY_TOKEN as string;
+  const pending = await listPendingApifyRuns();
+  if (pending.length === 0) {
+    return [];
+  }
+
+  const items: RawItem[] = [];
+  for (const run of pending) {
+    const age = Date.now() - Date.parse(run.startedAt);
+    const expired = Number.isFinite(age) && age > PENDING_RUN_MAX_AGE_MS;
+    try {
+      let state = "EXPIRED";
+      if (!expired) {
+        state = await getRunState(run.runId, token);
+        if (!TERMINAL_RUN_STATES.has(state)) {
+          // Still working. Leave it pending and try again next poll.
+          continue;
+        }
+      }
+
+      const map = mapperFor(run.provider);
+      const raw = map
+        ? await fetchDatasetItems(run.datasetId, token, TOTAL_CAP)
+        : [];
+      const mapped = map ? raw.map(map).filter((item) => item.url) : [];
+      items.push(...mapped);
+
+      await markApifyRunCollected(run.runId, state, mapped.length);
+      console.log(
+        `[social] drained ${run.provider} run ${run.runId} (${state}): ` +
+          `${raw.length} raw -> ${mapped.length} items.`,
+      );
+    } catch (error) {
+      // Leave the row pending: a transient Apify error should not cost us a
+      // dataset we already paid for. The age guard above is the backstop.
+      console.warn(`[social] drain failed for run ${run.runId}:`, error);
+    }
+  }
+
+  items.sort((a, b) => dateValue(b.publishedAt) - dateValue(a.publishedAt));
+  return dedupeByUrl(items).slice(0, TOTAL_CAP);
 }
 
 /**
@@ -147,8 +343,19 @@ export async function collectSocialItems(
 
   // Facebook page watchlist: posts FROM the curated public pages, filtered by
   // the shared classifier. Explicitly opt-in (paid Apify plan required).
+  //
+  // These two only START their actors — the scrape is far too slow to wait on,
+  // so they contribute nothing to THIS run and their results arrive via
+  // drainPendingApifyRuns() on a later poll. Returning [] keeps them ordinary
+  // tasks, so a failure to even start still counts toward "all actors failed".
   if (process.env.FB_WATCHLIST === "true") {
-    tasks.push({ name: "Facebook", run: () => collectFacebookPages(token) });
+    tasks.push({
+      name: "Facebook",
+      run: async () => {
+        await startFacebookPages(token);
+        return [];
+      },
+    });
   }
 
   // Public Facebook groups, only when FB_GROUPS names some. Same reasoning as
@@ -157,7 +364,10 @@ export async function collectSocialItems(
   if (groups.length > 0) {
     tasks.push({
       name: "Facebook groups",
-      run: () => collectFacebookGroups(groups, token),
+      run: async () => {
+        await startFacebookGroups(groups, token);
+        return [];
+      },
     });
   }
 
@@ -255,11 +465,11 @@ function facebookGroups(): string[] {
  * actors on Apify (group layouts change, and a group flipped to private simply
  * stops returning). A failure here is tolerated rather than failing the run.
  */
-async function collectFacebookGroups(
+async function startFacebookGroups(
   groups: string[],
   token: string,
-): Promise<RawItem[]> {
-  const raw = await runActor(
+): Promise<void> {
+  await startActor(
     FB_GROUPS_ACTOR,
     {
       startUrls: groups.map((url) => ({ url })),
@@ -267,43 +477,40 @@ async function collectFacebookGroups(
     },
     token,
     FB_GROUPS_MAX_ITEMS,
+    FB_GROUPS_PROVIDER,
   );
+}
 
-  return raw
-    .map((post) => {
-      const text = str(
-        pick(post, [
-          "text", "message", "content", "postText", "caption", "description",
-        ]),
-      );
-      const group = str(
-        pick(post, ["groupTitle", "groupName", "group.name", "facebookGroup"]),
-      );
-      const author = str(
-        pick(post, ["user.name", "author.name", "authorName", "from.name"]),
-      );
-      const url = str(
-        pick(post, ["url", "postUrl", "link", "facebookUrl", "permalink"]),
-      );
-      return {
-        title: text
-          ? truncate(text, 120)
-          : `Post in ${group || "a Facebook group"}`,
-        // Attribute to the group, not the individual — the group is the
-        // "outlet" for reporting, and it avoids naming private people.
-        source: group || "Facebook group",
-        url,
-        sourceType: "social" as const,
-        snippet: author ? `${author}: ${text}` : text,
-        publishedAt: toIso(
-          pick(post, ["time", "date", "publishedTime", "timestamp", "createdAt"]),
-        ),
-        provider: "Facebook groups (Apify)",
-        domain: "facebook.com",
-        engagement: engagementFrom(post),
-      };
-    })
-    .filter((item) => item.url);
+function mapFacebookGroupPost(post: Record<string, unknown>): RawItem {
+  const text = str(
+    pick(post, [
+      "text", "message", "content", "postText", "caption", "description",
+    ]),
+  );
+  const group = str(
+    pick(post, ["groupTitle", "groupName", "group.name", "facebookGroup"]),
+  );
+  const author = str(
+    pick(post, ["user.name", "author.name", "authorName", "from.name"]),
+  );
+  const url = str(
+    pick(post, ["url", "postUrl", "link", "facebookUrl", "permalink"]),
+  );
+  return {
+    title: text ? truncate(text, 120) : `Post in ${group || "a Facebook group"}`,
+    // Attribute to the group, not the individual — the group is the
+    // "outlet" for reporting, and it avoids naming private people.
+    source: group || "Facebook group",
+    url,
+    sourceType: "social" as const,
+    snippet: author ? `${author}: ${text}` : text,
+    publishedAt: toIso(
+      pick(post, ["time", "date", "publishedTime", "timestamp", "createdAt"]),
+    ),
+    provider: FB_GROUPS_PROVIDER,
+    domain: "facebook.com",
+    engagement: engagementFrom(post),
+  };
 }
 
 // Comma-separated FB page URLs, falling back to the curated default watchlist.
@@ -315,49 +522,57 @@ function facebookPages(): string[] {
   return fromEnv.length > 0 ? fromEnv : DEFAULT_FB_PAGES;
 }
 
-async function collectFacebookPages(token: string): Promise<RawItem[]> {
+async function startFacebookPages(token: string): Promise<void> {
   // apify/facebook-posts-scraper: recent posts FROM each watchlist page
   // (startUrls), capped per page. Corridor relevance is decided downstream by
-  // the shared classifier, so pages can post about anything. Output shape
-  // varies across actor versions — read fields defensively.
+  // the shared classifier, so pages can post about anything.
+  //
+  // Deferred: 23 pages x 10 posts takes minutes, not seconds. drainPending-
+  // ApifyRuns() picks the results up on a later poll.
   const input = {
     startUrls: facebookPages().map((url) => ({ url })),
     resultsLimit: FB_POSTS_PER_PAGE,
   };
 
-  const raw = await runActor(FB_ACTOR, input, token, FB_MAX_ITEMS);
-  return raw.map((post) => {
-    const text = str(
-      pick(post, [
-        "text", "message", "content", "postText", "caption",
-        "info", "intro", "description", "about",
-      ]),
-    );
-    const author = str(
-      pick(post, [
-        "pageName", "name", "title", "user.name", "author.name",
-        "authorName", "from.name",
-      ]),
-    );
-    const url = str(
-      pick(post, [
-        "url", "postUrl", "link", "facebookUrl", "permalink", "pageUrl",
-      ]),
-    );
-    return {
-      title: text ? truncate(text, 120) : author ? `${author} on Facebook` : "Facebook post",
-      source: author || "Facebook",
-      url,
-      sourceType: "social" as const,
-      snippet: text,
-      publishedAt: toIso(
-        pick(post, ["time", "date", "publishedTime", "timestamp", "createdAt"]),
-      ),
-      provider: "Facebook (Apify)",
-      domain: "facebook.com",
-      engagement: engagementFrom(post),
-    };
-  }).filter((item) => item.url);
+  await startActor(FB_ACTOR, input, token, FB_MAX_ITEMS, FB_PAGES_PROVIDER);
+}
+
+// Output shape varies across actor versions — read fields defensively.
+function mapFacebookPagePost(post: Record<string, unknown>): RawItem {
+  const text = str(
+    pick(post, [
+      "text", "message", "content", "postText", "caption",
+      "info", "intro", "description", "about",
+    ]),
+  );
+  const author = str(
+    pick(post, [
+      "pageName", "name", "title", "user.name", "author.name",
+      "authorName", "from.name",
+    ]),
+  );
+  const url = str(
+    pick(post, [
+      "url", "postUrl", "link", "facebookUrl", "permalink", "pageUrl",
+    ]),
+  );
+  return {
+    title: text
+      ? truncate(text, 120)
+      : author
+        ? `${author} on Facebook`
+        : "Facebook post",
+    source: author || "Facebook",
+    url,
+    sourceType: "social" as const,
+    snippet: text,
+    publishedAt: toIso(
+      pick(post, ["time", "date", "publishedTime", "timestamp", "createdAt"]),
+    ),
+    provider: FB_PAGES_PROVIDER,
+    domain: "facebook.com",
+    engagement: engagementFrom(post),
+  };
 }
 
 // Company pages to monitor, from LINKEDIN_PAGES (comma-separated). Accepts bare

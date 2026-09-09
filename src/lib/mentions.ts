@@ -28,6 +28,12 @@ export type ManualMentionInput = {
   snippet?: string;
   note?: string;
   sentiment?: string | null;
+  // How the analyst found it. "meta_ai" covers content surfaced by asking
+  // Meta AI (which has read access to the analyst's own linked Facebook
+  // account) to search Facebook — still a person reading the result and
+  // deciding it's relevant, just with an assist reaching feeds/groups a
+  // cookie-free collector can't see.
+  foundVia?: string;
 };
 
 export type ManualMentionResult =
@@ -44,9 +50,15 @@ const SOURCE_TYPES = ["social", "news", "broadcast"];
 const PRIORITIES = ["important", "normal", "low"];
 const SENTIMENTS: SentimentValue[] = ["positive", "neutral", "negative"];
 
+const FOUND_VIA_BASE: Record<string, string> = {
+  meta_ai:
+    "Surfaced via Meta AI search of Facebook, logged by an analyst (not machine-collected).",
+  analyst: "Added by an analyst (not machine-collected).",
+};
+
 /** Marks provenance in the one field the deck already prints as "Relevance:". */
-function provenanceReason(note: string): string {
-  const base = "Added by an analyst (not machine-collected).";
+function provenanceReason(note: string, foundVia?: string): string {
+  const base = FOUND_VIA_BASE[foundVia ?? "analyst"] ?? FOUND_VIA_BASE.analyst;
   return note.trim() ? `${base} ${note.trim()}` : base;
 }
 
@@ -92,7 +104,7 @@ export async function saveManualMention(
     sourceType,
     label,
     priority,
-    reason: provenanceReason(input.note ?? ""),
+    reason: provenanceReason(input.note ?? "", input.foundVia),
     snippet: (input.snippet ?? "").trim(),
     publishedAt,
   };

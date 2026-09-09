@@ -26,6 +26,13 @@ export default function AddMentionPage() {
                 in ten seconds.
               </p>
               <p className="mt-2 max-w-3xl text-base text-[var(--muted)]">
+                Meta AI, since it has read access to your linked Facebook
+                account, can search feeds and private groups a cookie-free
+                collector never sees. Ask it directly inside Facebook or
+                Messenger, then log anything relevant here and mark &ldquo;How
+                you found it&rdquo; as Meta AI.
+              </p>
+              <p className="mt-2 max-w-3xl text-base text-[var(--muted)]">
                 What you add is an ordinary story from here on: it appears in
                 the archive, counts in the weekly report, and feeds the
                 sentiment dials. It is marked as analyst-added, so a report

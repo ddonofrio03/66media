@@ -24,6 +24,7 @@ export default function AddMentionForm({ canEdit }: { canEdit: boolean }) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("");
+  const [foundVia, setFoundVia] = useState("analyst");
   const [sourceType, setSourceType] = useState("social");
   const [label, setLabel] = useState("confirmed_otb");
   const [priority, setPriority] = useState("normal");
@@ -39,6 +40,7 @@ export default function AddMentionForm({ canEdit }: { canEdit: boolean }) {
     setUrl("");
     setTitle("");
     setSource("");
+    setFoundVia("analyst");
     setSnippet("");
     setNote("");
     setSentiment("");
@@ -55,6 +57,7 @@ export default function AddMentionForm({ canEdit }: { canEdit: boolean }) {
           url,
           title,
           source,
+          foundVia,
           sourceType,
           label,
           priority,
@@ -139,6 +142,30 @@ export default function AddMentionForm({ canEdit }: { canEdit: boolean }) {
           <p className={HINT}>
             This is the outlet name in the report, so write it the way it should
             be printed.
+          </p>
+        </div>
+
+        <div>
+          <label className={LABEL} htmlFor="mention-found-via">
+            How you found it
+          </label>
+          <select
+            id="mention-found-via"
+            className={FIELD}
+            value={foundVia}
+            onChange={(event) => setFoundVia(event.target.value)}
+            disabled={disabled}
+          >
+            <option value="analyst">You (reading it directly)</option>
+            <option value="meta_ai">
+              Meta AI (asked it to search your Facebook)
+            </option>
+          </select>
+          <p className={HINT}>
+            Meta AI can search a private group or feed you belong to when you
+            ask it inside Facebook/Messenger. Either way this is a
+            person-verified mention, not a machine-collected one — this just
+            records the assist in the report.
           </p>
         </div>
 

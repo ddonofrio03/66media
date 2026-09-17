@@ -6,6 +6,7 @@ import {
 } from "@/lib/monitoring-settings";
 import { collectSocialItems, drainPendingApifyRuns } from "@/lib/social";
 import { collectBlueskyItems } from "@/lib/bluesky";
+import { collectMetroMonitorItems } from "@/lib/metro-monitor";
 import { collectXOfficialItems, isXOfficialEnabled } from "@/lib/x-official";
 import { enrichYouTubeTranscripts } from "@/lib/youtube-captions";
 import { refineClassifications } from "@/lib/ai-classify";
@@ -101,6 +102,10 @@ export async function collectDigestItems(
     // the official X API bills per unique post with 24h dedup, so frequent
     // polling costs cents (gated on X_BEARER_TOKEN, silent [] otherwise).
     { name: "Bluesky", run: () => collectBlueskyItems() },
+    // Metro Monitor TV/radio broadcast transcripts (flat subscription, not
+    // pay-per-result), so this runs on every collection like Bluesky. Silent
+    // [] when METRO_MONITOR_* env vars are unset.
+    { name: "Metro Monitor", run: () => collectMetroMonitorItems(now) },
     // Results of Apify runs a previous digest started. Reading a finished
     // dataset costs nothing — Apify billed for those posts the moment it
     // produced them — so this runs on every collection, poller included. It is

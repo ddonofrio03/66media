@@ -25,6 +25,15 @@ export async function buildDigestSnapshot(): Promise<DigestSnapshot> {
   const collection = await collectDigestItems(sources, now, settings);
   const collectedItems = collection.items;
 
+  // A provider that self-gates and swallows its own errors (Bluesky, Metro
+  // Monitor, X) never shows up in degradedProviders even when totally broken
+  // — it just quietly returns []. Log the raw per-provider counts so a "ran
+  // fine but returned nothing" failure is visible in the Vercel logs instead
+  // of looking identical to "no coverage today."
+  console.log(
+    `[daily-digest] provider counts: ${JSON.stringify(collection.providerCounts)}`,
+  );
+
   const reportedMap = await getReportedMap(
     collectedItems.map((item) => item.id),
   );

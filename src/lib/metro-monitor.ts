@@ -23,10 +23,18 @@ const TIMEOUT_MS = 8000;
 const PAGE_SIZE = 50;
 const MAX_PAGES = 6;
 
-// Television, Radio (Metro Monitor's sourceType ids). Web is deliberately
-// excluded — see file header.
-const BROADCAST_SOURCE_TYPES = "sourcetypes: (3,6)";
+// All three source types (Web, Radio, Television) — matches the saved
+// query's own default filter, verified working against the live API. Web
+// items are dropped client-side in toRawItems (see file header for why).
+const ALL_SOURCE_TYPES = "sourcetypes: (2,6,3)";
 const SHARE_TYPE: Record<number, string> = { 3: "tv", 6: "radio" };
+
+// Sent on every request, matching what the portal's own frontend sends.
+// Cheap insurance in case the API validates these server-side.
+const BROWSER_HEADERS = {
+  Origin: "https://client.metromonitor.com",
+  Referer: "https://client.metromonitor.com/",
+};
 
 type MetroSourceType = { id?: number; name?: string };
 type MetroSource = {
@@ -56,24 +64,33 @@ export async function collectMetroMonitorItems(
   const password = process.env.METRO_MONITOR_PASSWORD;
   const queryId = process.env.METRO_MONITOR_QUERY_ID;
   if (!username || !password || !queryId) {
+    console.log(
+      "[metro-monitor] Skipped: one or more of METRO_MONITOR_USERNAME/" +
+        "PASSWORD/QUERY_ID is not set.",
+    );
     return [];
   }
 
   const token = await login(username, password);
   if (!token) {
+    // login() already logged the specific reason (HTTP status or exception).
     return [];
   }
+  console.log("[metro-monitor] Login succeeded.");
 
   const lookbackHours = getDigestLookbackHours(now);
   const end = now.getTime();
   const start = end - lookbackHours * 60 * 60 * 1000;
 
   const items: RawItem[] = [];
+  let rawContentCount = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
     const batch = await fetchPage(token, queryId, start, end, page);
     if (!batch) {
+      // fetchPage() already logged the specific reason.
       break;
     }
+    rawContentCount += batch.content?.length ?? 0;
     items.push(...toRawItems(batch));
     const totalPages = batch.totalPages ?? 1;
     if (page + 1 >= totalPages || (batch.content?.length ?? 0) === 0) {
@@ -81,6 +98,10 @@ export async function collectMetroMonitorItems(
     }
   }
 
+  console.log(
+    `[metro-monitor] Fetched ${rawContentCount} raw stories, kept ${items.length} ` +
+      "TV/Radio items after the web-source filter.",
+  );
   return items;
 }
 
@@ -91,7 +112,11 @@ async function login(
   try {
     const response = await fetchWithTimeout(`${API_BASE}/auth/portal/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/plain, */*",
+        ...BROWSER_HEADERS,
+      },
       body: JSON.stringify({ username, password }),
     });
     if (!response.ok) {
@@ -115,10 +140,10 @@ async function fetchPage(
 ): Promise<MetroSearchResponse | null> {
   const url = new URL(`${API_BASE}/percolatables/search/query-results`);
   url.searchParams.set("queryId", queryId);
-  url.searchParams.set("selectedQueryFilters", BROADCAST_SOURCE_TYPES);
+  url.searchParams.set("selectedQueryFilters", ALL_SOURCE_TYPES);
   url.searchParams.set("page", String(page));
   url.searchParams.set("previewEnabled", "false");
-  url.searchParams.set("enableAggregations", "false");
+  url.searchParams.set("enableAggregations", "true");
   url.searchParams.set("enableHighlights", "true");
   url.searchParams.set("size", String(PAGE_SIZE));
   url.searchParams.set("facetsApplied", `(start: (${start}) AND end: (${end}))`);
@@ -130,8 +155,9 @@ async function fetchPage(
   try {
     const response = await fetchWithTimeout(url.toString(), {
       headers: {
-        Accept: "application/json",
+        Accept: "application/json, text/plain, */*",
         Authorization: `Bearer ${token}`,
+        ...BROWSER_HEADERS,
       },
     });
     if (!response.ok) {

@@ -162,6 +162,16 @@ textarea {
   width: 420px;
 }
 
+.report-orb-blue {
+  background: #105cae;
+  filter: none;
+  height: 420px;
+  opacity: 0.92;
+  right: -120px;
+  top: -160px;
+  width: 420px;
+}
+
 .report-table {
   min-width: 760px;
   table-layout: auto;

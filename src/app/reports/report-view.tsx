@@ -1,9 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import SentimentControl from "@/components/sentiment-control";
-import type { Report, ReportItem, SentimentMix } from "@/lib/report";
+import type {
+  Report,
+  ReportItem,
+  ReportPeriod,
+  SentimentMix,
+} from "@/lib/report";
 // Safe to import as a value: lib/outlets is pure reference data with no server
 // dependencies, unlike lib/report (which opens the Supabase client).
 import { formatReach, reachFor } from "@/lib/outlets";
@@ -255,6 +267,89 @@ function downloadCsv(report: Report) {
 
 /* ------------------------------ View --------------------------------- */
 
+type CoverTheme = {
+  background: string;
+  badge: string;
+  badgeStyle: CSSProperties;
+  // Tailwind classes, written out in full so the compiler picks them up.
+  text: string;
+  logoChip: string;
+  client: string;
+  title: string;
+  range: string;
+  taglineLead: string;
+  taglineAccent: string;
+  pills: string;
+  pill: string;
+  footer: string;
+};
+
+const COVER_THEMES: Record<ReportPeriod, CoverTheme> = {
+  // The original cover: navy with the orange frame.
+  weekly: {
+    background: "linear-gradient(150deg, #0a1f3c 0%, #0d2c55 55%, #105cae 130%)",
+    badge: "Weekly report",
+    badgeStyle: { background: "#ee7729", color: "#ffffff" },
+    text: "text-white",
+    logoChip: "shadow-lg",
+    client: "text-[#f8a829]",
+    title: "text-white",
+    range: "text-[#dbe7f6]",
+    taglineLead: "text-white",
+    taglineAccent: "text-[#f8a829]",
+    pills: "text-[#c8d9ef]",
+    pill: "border-white/25",
+    footer: "text-[#9fb8d8]",
+  },
+  // Majority orange with blue highlights.
+  monthly: {
+    background: "linear-gradient(150deg, #f28c42 0%, #ee7729 45%, #d9621a 100%)",
+    badge: "Monthly report",
+    badgeStyle: { background: "#105cae", color: "#ffffff" },
+    text: "text-white",
+    logoChip: "shadow-lg",
+    client: "text-[#0a1f3c]",
+    title: "text-white",
+    range: "text-white",
+    taglineLead: "text-white",
+    taglineAccent: "text-[#0a1f3c]",
+    pills: "text-[#0a1f3c]",
+    pill: "border-[#0a1f3c]/35",
+    footer: "text-[#0a1f3c]",
+  },
+  // White, with the brand's orange and blue as accents.
+  custom: {
+    background:
+      "repeating-linear-gradient(135deg, rgba(16,92,174,0.045) 0 2px, transparent 2px 22px), #ffffff",
+    badge: "Custom range",
+    badgeStyle: {
+      background: "transparent",
+      border: "1.5px solid #105cae",
+      color: "#105cae",
+    },
+    text: "text-[#0a1f3c]",
+    logoChip: "ring-1 ring-[#d0ccc9] shadow-sm",
+    client: "text-[#d9621a]",
+    title: "text-[#105cae]",
+    range: "text-[#2f3b47]",
+    taglineLead: "text-[#0a1f3c]",
+    taglineAccent: "text-[#ee7729]",
+    pills: "text-[#105cae]",
+    pill: "border-[#105cae]/30",
+    footer: "text-[#5b6b7c]",
+  },
+};
+
+/** "2026-09" -> "Sep", for the monthly cover's background lettering. */
+function monthAbbreviation(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!year || !month) return "";
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleString("en-US", {
+    month: "short",
+    timeZone: "UTC",
+  });
+}
+
 export default function ReportView({
   report,
   generatedOn,
@@ -266,10 +361,10 @@ export default function ReportView({
   const [title, setTitle] = useState(
     curation.title ??
       (report.range.period === "weekly"
-        ? "Executive Summary"
+        ? "Weekly Media Report"
         : report.range.period === "monthly"
-          ? "Monthly Earned Media Report"
-          : "Earned Media Report"),
+          ? "Monthly Media Report"
+          : "Custom Media Report"),
   );
   const [clientName, setClientName] = useState(
     curation.clientName ?? "The 66 Express Outside the Beltway",
@@ -507,6 +602,11 @@ export default function ReportView({
       return next;
     });
   }
+
+  const period = report.range.period;
+  const cover = COVER_THEMES[period];
+  const monthWatermark =
+    period === "monthly" ? monthAbbreviation(report.range.key) : "";
 
   const mediaItems = report.items.filter((item) => item.sourceType !== "social");
   const socialItems = report.items.filter((item) => item.sourceType === "social");
@@ -749,21 +849,47 @@ export default function ReportView({
       )}
 
       <article className="report-document overflow-hidden rounded-[28px] border border-[#d0ccc9] bg-[#f1efec] shadow-xl">
-        {/* Cover — navy with the brand's orange frame accents */}
+        {/* Cover. Same brand palette for every period, but each has its own
+            look so a weekly, monthly and custom report are told apart at a
+            glance: weekly is navy with the orange frame, monthly is orange
+            with blue highlights and the month's name, custom is white with
+            an orange side bar. */}
         <section
-          className="report-page report-cover relative overflow-hidden p-7 text-white md:p-12"
-          style={{
-            background:
-              "linear-gradient(150deg, #0a1f3c 0%, #0d2c55 55%, #105cae 130%)",
-          }}
+          className={`report-page report-cover relative overflow-hidden p-7 md:p-12 ${cover.text}`}
+          style={{ background: cover.background }}
         >
-          <div className="absolute inset-x-0 top-0 z-20 h-1.5 bg-[#ee7729]" />
-          <div className="absolute inset-x-0 bottom-0 z-20 h-1.5 bg-[#ee7729]" />
-          <div className="report-orb report-orb-one" />
-          <div className="report-orb report-orb-two" />
-          <div className="relative z-10 flex min-h-[440px] flex-col justify-between">
+          {period === "weekly" && (
+            <>
+              <div className="absolute inset-x-0 top-0 z-20 h-1.5 bg-[#ee7729]" />
+              <div className="absolute inset-x-0 bottom-0 z-20 h-1.5 bg-[#ee7729]" />
+              <div className="report-orb report-orb-one" />
+              <div className="report-orb report-orb-two" />
+            </>
+          )}
+          {period === "monthly" && (
+            <>
+              <div className="absolute inset-x-0 top-0 z-20 h-2.5 bg-[#105cae]" />
+              <div className="absolute inset-x-0 bottom-0 z-20 h-2.5 bg-[#105cae]" />
+              <div className="report-orb report-orb-blue" />
+              {monthWatermark && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -bottom-10 right-4 z-0 select-none text-[11rem] font-black uppercase leading-none tracking-tighter text-white/[0.14] md:text-[16rem]"
+                >
+                  {monthWatermark}
+                </span>
+              )}
+            </>
+          )}
+          {period === "custom" && (
+            <>
+              <div className="absolute inset-y-0 left-0 z-20 w-3 bg-[#ee7729]" />
+              <div className="absolute inset-x-0 bottom-0 z-20 h-1.5 bg-[#105cae]" />
+            </>
+          )}
+          <div className="relative z-10 flex min-h-[440px] flex-col justify-between gap-8">
             <div className="flex items-start justify-between gap-5">
-              <div className="rounded-xl bg-white p-2 shadow-lg">
+              <div className={`rounded-xl bg-white p-2 ${cover.logoChip}`}>
                 <Image
                   src="/66OTB.png"
                   alt="66 Express Outside the Beltway"
@@ -772,41 +898,50 @@ export default function ReportView({
                   priority
                 />
               </div>
-              <div className="rounded-xl bg-white px-3 py-2 shadow-lg">
+              <div className={`rounded-xl bg-white px-3 py-2 ${cover.logoChip}`}>
                 <Image src="/TCG.png" alt="The Casey Group" width={135} height={38} />
               </div>
             </div>
 
             <div className="max-w-3xl">
-              <p className="text-sm font-bold uppercase tracking-[0.24em] text-[#f8a829]">
+              <span
+                className="inline-block rounded-full px-4 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.2em]"
+                style={cover.badgeStyle}
+              >
+                {cover.badge}
+              </span>
+              <p className={`mt-5 text-sm font-bold uppercase tracking-[0.24em] ${cover.client}`}>
                 {clientName}
               </p>
-              <h2 className="mt-5 text-4xl font-semibold leading-tight tracking-tight md:text-6xl">
+              <h2 className={`mt-5 text-4xl font-semibold leading-tight tracking-tight md:text-6xl ${cover.title}`}>
                 {title}
               </h2>
-              <p className="mt-6 text-lg text-[#dbe7f6] md:text-2xl">
+              <p className={`mt-6 text-lg md:text-2xl ${cover.range}`}>
                 {report.range.label}
               </p>
+              {period === "custom" && (
+                <div className="brand-rule"><span /><span /><span /></div>
+              )}
             </div>
 
             <div className="flex flex-col gap-5">
               <p className="text-2xl font-bold tracking-tight md:text-3xl">
-                <span className="text-white">Sit Less. </span>
-                <span className="text-[#f8a829]">Live More.</span>
+                <span className={cover.taglineLead}>Sit Less. </span>
+                <span className={cover.taglineAccent}>Live More.</span>
               </p>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap gap-3 text-xs font-bold uppercase tracking-[0.16em] text-[#c8d9ef]">
-                  <span className="rounded-full border border-white/25 px-4 py-2">
+                <div className={`flex flex-wrap gap-3 text-xs font-bold uppercase tracking-[0.16em] ${cover.pills}`}>
+                  <span className={`rounded-full border px-4 py-2 ${cover.pill}`}>
                     Earned media
                   </span>
-                  <span className="rounded-full border border-white/25 px-4 py-2">
+                  <span className={`rounded-full border px-4 py-2 ${cover.pill}`}>
                     Washington, DC market
                   </span>
-                  <span className="rounded-full border border-white/25 px-4 py-2">
+                  <span className={`rounded-full border px-4 py-2 ${cover.pill}`}>
                     Web + broadcast + social
                   </span>
                 </div>
-                <p className="text-xs text-[#9fb8d8]">
+                <p className={`text-xs ${cover.footer}`}>
                   Prepared by The Casey Group · Generated {generatedOn}
                 </p>
               </div>

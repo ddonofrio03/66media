@@ -1,9 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import SentimentControl from "@/components/sentiment-control";
-import type { Report, ReportItem, SentimentMix } from "@/lib/report";
+import type {
+  Report,
+  ReportItem,
+  ReportPeriod,
+  SentimentMix,
+} from "@/lib/report";
 // Safe to import as a value: lib/outlets is pure reference data with no server
 // dependencies, unlike lib/report (which opens the Supabase client).
 import { formatReach, reachFor } from "@/lib/outlets";
@@ -254,6 +266,42 @@ function downloadCsv(report: Report) {
 }
 
 /* ------------------------------ View --------------------------------- */
+
+const COVER_STYLES: Record<
+  ReportPeriod,
+  { background: string; badge: string; badgeStyle: CSSProperties }
+> = {
+  weekly: {
+    background: "linear-gradient(150deg, #0a1f3c 0%, #0d2c55 55%, #105cae 130%)",
+    badge: "Weekly report",
+    badgeStyle: { background: "#ee7729", color: "#ffffff" },
+  },
+  monthly: {
+    background: "linear-gradient(210deg, #105cae -10%, #0d2c55 45%, #0a1f3c 100%)",
+    badge: "Monthly report",
+    badgeStyle: { background: "#f8a829", color: "#0a1f3c" },
+  },
+  custom: {
+    background:
+      "repeating-linear-gradient(135deg, rgba(255,255,255,0.035) 0 2px, transparent 2px 22px), #0a1f3c",
+    badge: "Custom range",
+    badgeStyle: {
+      background: "transparent",
+      border: "1.5px solid #ffffff",
+      color: "#ffffff",
+    },
+  },
+};
+
+/** "2026-09" -> "Sep", for the monthly cover's background lettering. */
+function monthAbbreviation(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!year || !month) return "";
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleString("en-US", {
+    month: "short",
+    timeZone: "UTC",
+  });
+}
 
 export default function ReportView({
   report,
@@ -508,6 +556,11 @@ export default function ReportView({
     });
   }
 
+  const period = report.range.period;
+  const cover = COVER_STYLES[period];
+  const monthWatermark =
+    period === "monthly" ? monthAbbreviation(report.range.key) : "";
+
   const mediaItems = report.items.filter((item) => item.sourceType !== "social");
   const socialItems = report.items.filter((item) => item.sourceType === "social");
 
@@ -749,19 +802,46 @@ export default function ReportView({
       )}
 
       <article className="report-document overflow-hidden rounded-[28px] border border-[#d0ccc9] bg-[#f1efec] shadow-xl">
-        {/* Cover — navy with the brand's orange frame accents */}
+        {/* Cover. Same brand palette for every period, but each has its own
+            look so a weekly, monthly and custom report are told apart at a
+            glance: weekly is the navy cover with the orange frame, monthly
+            reverses the gradient under a gold frame and the month's name,
+            custom is flat navy with an orange side bar and fine stripes. */}
         <section
           className="report-page report-cover relative overflow-hidden p-7 text-white md:p-12"
-          style={{
-            background:
-              "linear-gradient(150deg, #0a1f3c 0%, #0d2c55 55%, #105cae 130%)",
-          }}
+          style={{ background: cover.background }}
         >
-          <div className="absolute inset-x-0 top-0 z-20 h-1.5 bg-[#ee7729]" />
-          <div className="absolute inset-x-0 bottom-0 z-20 h-1.5 bg-[#ee7729]" />
-          <div className="report-orb report-orb-one" />
-          <div className="report-orb report-orb-two" />
-          <div className="relative z-10 flex min-h-[440px] flex-col justify-between">
+          {period === "weekly" && (
+            <>
+              <div className="absolute inset-x-0 top-0 z-20 h-1.5 bg-[#ee7729]" />
+              <div className="absolute inset-x-0 bottom-0 z-20 h-1.5 bg-[#ee7729]" />
+              <div className="report-orb report-orb-one" />
+              <div className="report-orb report-orb-two" />
+            </>
+          )}
+          {period === "monthly" && (
+            <>
+              <div className="absolute inset-x-0 top-0 z-20 h-2.5 bg-[#f8a829]" />
+              <div className="absolute inset-x-0 bottom-0 z-20 h-2.5 bg-[#f8a829]" />
+              <div className="report-orb report-orb-gold" />
+              <div className="report-orb report-orb-small" />
+              {monthWatermark && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -bottom-10 right-4 z-0 select-none text-[11rem] font-black uppercase leading-none tracking-tighter text-white/[0.07] md:text-[16rem]"
+                >
+                  {monthWatermark}
+                </span>
+              )}
+            </>
+          )}
+          {period === "custom" && (
+            <>
+              <div className="absolute inset-y-0 left-0 z-20 w-3 bg-[#ee7729]" />
+              <div className="absolute inset-x-0 bottom-0 z-20 h-1.5 bg-[#105cae]" />
+            </>
+          )}
+          <div className="relative z-10 flex min-h-[440px] flex-col justify-between gap-8">
             <div className="flex items-start justify-between gap-5">
               <div className="rounded-xl bg-white p-2 shadow-lg">
                 <Image
@@ -778,7 +858,13 @@ export default function ReportView({
             </div>
 
             <div className="max-w-3xl">
-              <p className="text-sm font-bold uppercase tracking-[0.24em] text-[#f8a829]">
+              <span
+                className="inline-block rounded-full px-4 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.2em]"
+                style={cover.badgeStyle}
+              >
+                {cover.badge}
+              </span>
+              <p className="mt-5 text-sm font-bold uppercase tracking-[0.24em] text-[#f8a829]">
                 {clientName}
               </p>
               <h2 className="mt-5 text-4xl font-semibold leading-tight tracking-tight md:text-6xl">
@@ -787,6 +873,9 @@ export default function ReportView({
               <p className="mt-6 text-lg text-[#dbe7f6] md:text-2xl">
                 {report.range.label}
               </p>
+              {period === "custom" && (
+                <div className="brand-rule"><span /><span /><span /></div>
+              )}
             </div>
 
             <div className="flex flex-col gap-5">

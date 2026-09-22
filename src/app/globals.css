@@ -162,6 +162,23 @@ textarea {
   width: 420px;
 }
 
+.report-orb-gold {
+  background: #f8a829;
+  bottom: -160px;
+  height: 380px;
+  left: -120px;
+  opacity: 0.14;
+  width: 380px;
+}
+
+.report-orb-small {
+  background: #ee7729;
+  height: 180px;
+  right: 12%;
+  top: -60px;
+  width: 180px;
+}
+
 .report-table {
   min-width: 760px;
   table-layout: auto;

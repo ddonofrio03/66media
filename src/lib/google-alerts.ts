@@ -90,11 +90,14 @@ export function parseAlertEntries(xml: string): RawItem[] {
 
     const host = hostOf(url);
     const published = readTag(entryXml, "published") || readTag(entryXml, "updated");
+    // A site:reddit.com alert backs up the Reddit collector, so its hits go to
+    // the social section under their subreddit, like the collector's own.
+    const isReddit = host === "reddit.com" || host.endsWith(".reddit.com");
     items.push({
       title,
-      source: host || "Google Alerts",
+      source: (isReddit && subredditOf(url)) || host || "Google Alerts",
       url,
-      sourceType: "news",
+      sourceType: isReddit ? "social" : "news",
       snippet: htmlToText(readTag(entryXml, "content")) || title,
       publishedAt: toIso(published),
       provider: "Google Alerts",
@@ -112,6 +115,15 @@ function unwrapGoogleRedirect(value: string): string {
       return url.searchParams.get("url") || url.searchParams.get("q") || value;
     }
     return value;
+  } catch {
+    return "";
+  }
+}
+
+function subredditOf(value: string): string {
+  try {
+    const name = new URL(value).pathname.match(/^\/r\/([^/]+)/i)?.[1];
+    return name ? `r/${name}` : "";
   } catch {
     return "";
   }

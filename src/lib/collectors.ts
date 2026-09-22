@@ -242,9 +242,10 @@ async function collectRedditItems(exactQueries: string[]): Promise<RawItem[]> {
     return [];
   }
   // Reddit's JSON search (reddit.com/search.json) returns an HTML block page
-  // from datacenter IPs like Vercel's. The old.reddit.com RSS (Atom) endpoint
-  // is not blocked the same way, so use that instead.
-  const url = new URL("https://old.reddit.com/search.rss");
+  // from datacenter IPs like Vercel's; the Atom feed is not blocked the same
+  // way. It must be www: since late Aug 2026 old.reddit.com answers logged-out
+  // requests with the new site's HTML shell (200, text/html, zero entries).
+  const url = new URL("https://www.reddit.com/search.rss");
   url.searchParams.set("q", exactQueries.join(" OR "));
   url.searchParams.set("sort", "new");
   url.searchParams.set("limit", "25");
@@ -258,7 +259,13 @@ async function collectRedditItems(exactQueries: string[]): Promise<RawItem[]> {
     throw new Error(`Reddit request failed with ${response.status}`);
   }
 
+  // An HTML page with a 200 is a block or redirect, not "no results". Throw so
+  // Reddit shows up in degradedProviders instead of silently counting zero.
   const xml = await response.text();
+  if (!/<feed\b/i.test(xml)) {
+    const contentType = response.headers.get("content-type") ?? "unknown";
+    throw new Error(`Reddit returned a non-feed response (${contentType})`);
+  }
   return parseAtomEntries(xml).map((entry) => ({
     title: entry.title || "Untitled Reddit post",
     source: entry.subreddit || "Reddit",

@@ -2,13 +2,11 @@ import { getDigestLookbackHours } from "@/lib/time";
 import type { RawItem } from "@/lib/collectors";
 
 /**
- * Metro Monitor (streamslist.com) broadcast monitoring: TV/radio five-minute
- * story transcripts matched against a saved query in their portal. Fills a
- * gap no free RSS source can reach — local TV/radio segments — so this stays
- * scoped to TV/Radio only. Web-source hits from the same query are skipped:
- * their links point back into Metro Monitor's login-gated portal, and the
- * same articles are already reachable (with real, public URLs) via the
- * Google News collector.
+ * Metro Monitor (streamslist.com) media monitoring: TV/radio/web hits
+ * matched against a saved query in their portal. TV/radio fills a gap no
+ * free RSS source can reach; web hits are included too (at the user's
+ * request) even though their links point back into Metro Monitor's
+ * login-gated portal rather than the original public article.
  *
  * Gated on:
  *   METRO_MONITOR_USERNAME
@@ -24,10 +22,9 @@ const PAGE_SIZE = 50;
 const MAX_PAGES = 6;
 
 // All three source types (Web, Radio, Television) — matches the saved
-// query's own default filter, verified working against the live API. Web
-// items are dropped client-side in toRawItems (see file header for why).
+// query's own default filter, verified working against the live API.
 const ALL_SOURCE_TYPES = "sourcetypes: (2,6,3)";
-const SHARE_TYPE: Record<number, string> = { 3: "tv", 6: "radio" };
+const SHARE_TYPE: Record<number, string> = { 3: "tv", 6: "radio", 2: "web" };
 
 // Sent on every request, matching what the portal's own frontend sends.
 // Cheap insurance in case the API validates these server-side.
@@ -100,7 +97,7 @@ export async function collectMetroMonitorItems(
 
   console.log(
     `[metro-monitor] Fetched ${rawContentCount} raw stories, kept ${items.length} ` +
-      "TV/Radio items after the web-source filter.",
+      "after mapping (dropped ones lacked a recognized source type or uuid).",
   );
   return items;
 }
@@ -189,12 +186,16 @@ function toRawItems(batch: MetroSearchResponse): RawItem[] {
       const url = `https://client.metromonitor.com/shares/${shareType}/${uuid}`;
       const content = item.content ?? "";
       const snippet = pickSnippet(highlights[String(item.id)]?.content, content);
+      // TV/radio always show in their own section regardless of relevance
+      // (same convention as the TV/Radio RSS feeds in collectors.ts); web
+      // hits go through normal keyword classification like any other article.
+      const sourceType = typeId === 2 ? "news" : "broadcast";
 
       const raw: RawItem = {
         title: item.title || source?.name || "Untitled segment",
         source: source?.name || "Metro Monitor",
         url,
-        sourceType: "broadcast",
+        sourceType,
         snippet,
         publishedAt: toIso(item.published, item.timezones),
         provider: "Metro Monitor",

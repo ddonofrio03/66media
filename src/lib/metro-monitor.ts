@@ -8,6 +8,16 @@ import type { RawItem } from "@/lib/collectors";
  * request) even though their links point back into Metro Monitor's
  * login-gated portal rather than the original public article.
  *
+ * IMPORTANT: Metro Monitor's `/shares/{type}/{uuid}` links are NOT stable —
+ * every time a story is returned (by a search or by the portal's own "Share"
+ * button) it mints a brand-new, short-lived (~1-2 day) share token, even for
+ * the identical story. Storing that uuid at collection time means the link
+ * is already stale by the time a digest is read days later. So `toRawItems`
+ * points every item at our own `/api/metro-monitor/open` redirect instead,
+ * keyed on the story's *stable* numeric id (`percolatable.id`) — that route
+ * mints a fresh share link on click via `mintFreshShareLink`, verified
+ * against the live API (see `POST /public-shares`).
+ *
  * Gated on:
  *   METRO_MONITOR_USERNAME
  *   METRO_MONITOR_PASSWORD
@@ -25,6 +35,16 @@ const MAX_PAGES = 6;
 // query's own default filter, verified working against the live API.
 const ALL_SOURCE_TYPES = "sourcetypes: (2,6,3)";
 const SHARE_TYPE: Record<number, string> = { 3: "tv", 6: "radio", 2: "web" };
+
+// The saved query's own free-text search string, required by `/public-shares`
+// alongside the query id. Captured verbatim from a live share-generation
+// request; only needs updating if the saved query's keywords change in the
+// portal (id 27417).
+const FREE_QUERY_TEXT =
+  '("66 Express" or "66 outside the beltway" or "Express mobility Partners" ' +
+  'or "I-66 EMP" or "66 emp" or "I-66 outside the beltway" or "I-66 Express" ' +
+  'or "66 Express Lanes" or "66 Express Mobility Partners" or "66EMP" or ' +
+  '"Ferrovial construction" or "FAM Construction" or "Transform 66")';
 
 // Sent on every request, matching what the portal's own frontend sends.
 // Cheap insurance in case the API validates these server-side.
@@ -128,6 +148,62 @@ async function login(
   }
 }
 
+/**
+ * Mints a fresh, short-lived share link for one story, called at click time
+ * (see `src/app/api/metro-monitor/open/route.ts`) rather than at collection
+ * time, since a link stored during collection would already be stale by the
+ * time anyone clicks it (see the file header). `percolatableId` is the
+ * story's stable numeric id (Metro Monitor's `MetroItem.id`), not a uuid.
+ */
+export async function mintFreshShareLink(
+  percolatableId: number,
+  shareType: string,
+): Promise<string | null> {
+  const username = process.env.METRO_MONITOR_USERNAME;
+  const password = process.env.METRO_MONITOR_PASSWORD;
+  const queryId = process.env.METRO_MONITOR_QUERY_ID;
+  if (!username || !password || !queryId) {
+    return null;
+  }
+
+  const token = await login(username, password);
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const response = await fetchWithTimeout(`${API_BASE}/public-shares`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/plain, */*",
+        Authorization: `Bearer ${token}`,
+        ...BROWSER_HEADERS,
+      },
+      body: JSON.stringify({
+        percolatable: { id: percolatableId },
+        query: { id: Number(queryId) },
+        freeQueryText: FREE_QUERY_TEXT,
+      }),
+    });
+    if (!response.ok) {
+      console.warn(
+        `[metro-monitor] mintFreshShareLink failed (HTTP ${response.status})`,
+      );
+      return null;
+    }
+    const data = (await response.json()) as { publicId?: string };
+    if (!data.publicId) {
+      console.warn("[metro-monitor] mintFreshShareLink: no publicId in response");
+      return null;
+    }
+    return `https://client.metromonitor.com/shares/${shareType}/${data.publicId}`;
+  } catch (error) {
+    console.warn("[metro-monitor] mintFreshShareLink skipped:", error);
+    return null;
+  }
+}
+
 async function fetchPage(
   token: string,
   queryId: string,
@@ -183,7 +259,9 @@ function toRawItems(batch: MetroSearchResponse): RawItem[] {
         return null;
       }
 
-      const url = `https://client.metromonitor.com/shares/${shareType}/${uuid}`;
+      // Not the raw Metro Monitor share link — see the file header. The uuid
+      // check above only confirms this story actually has a shareable clip.
+      const url = `${appBaseUrl()}/api/metro-monitor/open?id=${item.id}&type=${shareType}`;
       const content = item.content ?? "";
       const snippet = pickSnippet(highlights[String(item.id)]?.content, content);
       // TV/radio always show in their own section regardless of relevance
@@ -221,6 +299,15 @@ function stripTags(value: string): string {
 
 function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1).trim()}...`;
+}
+
+// Duplicated from digest.ts (not imported) to avoid a circular import:
+// digest.ts -> collectors.ts -> metro-monitor.ts -> digest.ts.
+function appBaseUrl() {
+  return (process.env.APP_BASE_URL || "https://66media.vercel.app").replace(
+    /\/$/,
+    "",
+  );
 }
 
 /**

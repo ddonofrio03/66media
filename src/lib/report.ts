@@ -49,6 +49,8 @@ export type ReportItem = {
   /** Deep link to the moment of the mention. */
   clipUrl: string;
   engagement: Engagement | null;
+  /** Which collector found this (dashboard-only; never in the client report). */
+  provider: string | null;
 };
 
 /**
@@ -472,7 +474,12 @@ export async function getReport(
     "id, title, url, source, source_type, label, priority, reason, snippet, published_at";
   const ANALYST_COLUMNS = `${BASE_COLUMNS}, feedback, sentiment, sentiment_source`;
   const ENRICHED_COLUMNS = `${ANALYST_COLUMNS}, byline, transcript, clip_url, engagement`;
-  let { data, error } = await runQuery(`${ENRICHED_COLUMNS}, sentiment_score`);
+  let { data, error } = await runQuery(
+    `${ENRICHED_COLUMNS}, sentiment_score, provider`,
+  );
+  if (error && error.message.includes("provider")) {
+    ({ data, error } = await runQuery(`${ENRICHED_COLUMNS}, sentiment_score`));
+  }
   if (error && error.message.includes("sentiment_score")) {
     ({ data, error } = await runQuery(ENRICHED_COLUMNS));
   }
@@ -516,6 +523,7 @@ export async function getReport(
     transcript: (row.transcript as string | null) ?? "",
     clipUrl: (row.clip_url as string | null) ?? "",
     engagement: (row.engagement as Engagement | null) ?? null,
+    provider: (row.provider as string | null) ?? null,
   }));
 
   const mediaItems = items.filter((item) => !isSocial(item));

@@ -239,6 +239,14 @@ function TopStory({ story }: { story: ReportItem }) {
           {story.source}
           {published ? ` · ${published}` : ""}
         </span>
+        {story.provider && (
+          <span
+            className="rounded-full bg-[var(--panel)] px-2 py-0.5 text-[11px] text-[var(--muted)] ring-1 ring-[var(--line)]"
+            title="Which collector found this (internal, not shown to the client)"
+          >
+            via {story.provider}
+          </span>
+        )}
         <span className="ml-auto">
           <FeedbackButtons id={story.id} initial={story.feedback} />
         </span>

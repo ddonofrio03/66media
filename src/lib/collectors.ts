@@ -388,6 +388,7 @@ function classifyItem(
     transcript: item.transcript,
     clipUrl: item.clipUrl,
     engagement: item.engagement,
+    provider: item.provider,
   };
 }
 

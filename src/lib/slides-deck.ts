@@ -20,9 +20,9 @@ import type { SentimentTrend } from "@/lib/report-insights";
  *
  * Section order follows the client template:
  *   1. Cover + table of contents
- *   2. Weekly Overview divider
+ *   2. Period overview divider
  *   3. Facility mentions — counts (Online/Print · Radio · TV), sentiment,
- *      topics, outlets, then the itemised list
+ *      topics, outlets, selected featured mentions, then the itemised list
  *   4. Relevant News — adjacent/industry stories
  *   5. Social — counts, sentiment, trend, themes, posts by platform
  *   6. Comments & Screenshots — a placeholder the analyst fills by hand
@@ -106,9 +106,14 @@ export async function buildReportDeck(
   pptx.title = options.title;
 
   const d = derive(report);
+  const itemsById = new Map(report.items.map((item) => [item.id, item]));
+  const featured = [...new Set(options.featuredIds)]
+    .map((id) => itemsById.get(id))
+    .filter((item): item is ReportItem => Boolean(item));
 
   // Pre-compute how many slides each itemised section spans, so the table of
   // contents can carry real page numbers.
+  const featuredPages = featured.length ? pageCount(featured.length, 2) : 0;
   const facilityListPages = pageCount(d.facility.length, FACILITY_PER_PAGE);
   const relevantPages = pageCount(d.relevant.length, RELEVANT_PER_PAGE);
   const socialPages = pageCount(d.social.length, SOCIAL_PER_PAGE);
@@ -118,7 +123,12 @@ export async function buildReportDeck(
   page += 1; // cover itself
   page += 1; // weekly overview divider
   toc.push({ label: "Number and Sentiment of Mentions", page });
-  page += 1 + facilityListPages; // facility summary + its list
+  page += 1; // facility summary
+  if (featuredPages) {
+    toc.push({ label: "Featured Mentions", page });
+    page += featuredPages;
+  }
+  page += facilityListPages;
   toc.push({ label: "Relevant News", page });
   page += Math.max(relevantPages, 1);
   toc.push({ label: "Social Media Mentions and Comments", page });
@@ -126,8 +136,16 @@ export async function buildReportDeck(
   toc.push({ label: "Social Media Screenshots", page });
 
   addCoverSlide(pptx, report, options, toc);
-  addDividerSlide(pptx, "Weekly Overview");
+  addDividerSlide(
+    pptx,
+    report.range.period === "monthly"
+      ? "Monthly Overview"
+      : report.range.period === "custom"
+        ? "Report Overview"
+        : "Weekly Overview",
+  );
   addFacilitySummarySlide(pptx, report, options, d);
+  addFeaturedSlides(pptx, featured);
   addItemListSlides(pptx, d.facility, FACILITY_PER_PAGE, {
     kicker: "Number and Sentiment of Mentions",
     heading: "Broadcast / Published Mentions",
@@ -236,17 +254,24 @@ function addCoverSlide(
     line: { type: "none" },
   });
 
-  slide.addText("EXECUTIVE SUMMARY", {
-    x: MARGIN,
-    y: 1.3,
-    w: CONTENT_W,
-    h: 0.45,
-    fontFace: FONT,
-    fontSize: 24,
-    bold: true,
-    color: "FFFFFF",
-    charSpacing: 1,
-  });
+  slide.addText(
+    report.range.period === "monthly"
+      ? "MONTHLY REPORT"
+      : report.range.period === "custom"
+        ? "MEDIA REPORT"
+        : "EXECUTIVE SUMMARY",
+    {
+      x: MARGIN,
+      y: 1.3,
+      w: CONTENT_W,
+      h: 0.45,
+      fontFace: FONT,
+      fontSize: 24,
+      bold: true,
+      color: "FFFFFF",
+      charSpacing: 1,
+    },
+  );
   slide.addText(options.clientName, {
     x: MARGIN,
     y: 1.85,
@@ -567,6 +592,75 @@ type ListOptions = {
 const FACILITY_PER_PAGE = 7;
 const RELEVANT_PER_PAGE = 7;
 const SOCIAL_PER_PAGE = 8;
+
+/** Analyst-selected stories appear near the front of the editable draft. */
+function addFeaturedSlides(pptx: PptxGenJS, items: ReportItem[]): void {
+  for (let start = 0; start < items.length; start += 2) {
+    const page = Math.floor(start / 2) + 1;
+    const pages = pageCount(items.length, 2);
+    const slide = contentSlide(
+      pptx,
+      "Curated Coverage",
+      pages > 1 ? `Featured Mentions (${page} of ${pages})` : "Featured Mentions",
+    );
+
+    for (const [index, item] of items.slice(start, start + 2).entries()) {
+      const y = 1.8 + index * 4.25;
+      panel(slide, MARGIN, y, CONTENT_W, 3.95, "");
+      slide.addText(
+        `${formatDate(item)}  ·  ${item.source}  ·  ${item.sourceType === "social" ? "Social" : item.sourceType === "broadcast" ? "Broadcast" : "Online / Print"}`,
+        {
+          x: MARGIN + 0.25,
+          y: y + 0.23,
+          w: CONTENT_W - 0.5,
+          h: 0.28,
+          fontFace: FONT,
+          fontSize: 9,
+          bold: true,
+          color: MUTED,
+        },
+      );
+      slide.addText(item.title, {
+        x: MARGIN + 0.25,
+        y: y + 0.62,
+        w: CONTENT_W - 0.5,
+        h: 0.75,
+        fontFace: FONT,
+        fontSize: 17,
+        bold: true,
+        color: BLUE,
+        valign: "top",
+        hyperlink: { url: item.url },
+      });
+      const excerpt = item.transcript || item.snippet;
+      if (excerpt) {
+        slide.addText(truncate(excerpt.replace(/\s+/g, " ").trim(), 380), {
+          x: MARGIN + 0.25,
+          y: y + 1.52,
+          w: CONTENT_W - 0.5,
+          h: 1.55,
+          fontFace: FONT,
+          fontSize: 11,
+          color: INK,
+          valign: "top",
+          breakLine: false,
+        });
+      }
+      slide.addText("Open source", {
+        x: MARGIN + 0.25,
+        y: y + 3.36,
+        w: 1.5,
+        h: 0.28,
+        fontFace: FONT,
+        fontSize: 10,
+        bold: true,
+        color: BLUE,
+        underline: { color: BLUE },
+        hyperlink: { url: item.url },
+      });
+    }
+  }
+}
 
 function addItemListSlides(
   pptx: PptxGenJS,
@@ -891,6 +985,10 @@ function emptyNote(
 
 function pageCount(total: number, perPage: number): number {
   return Math.max(1, Math.ceil(total / perPage));
+}
+
+function truncate(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max - 1).trim()}…`;
 }
 
 function formatDate(item: ReportItem): string {

@@ -592,6 +592,7 @@ export async function getLatestStoredSnapshot(): Promise<DigestSnapshot | null> 
  * calculated value" — distinct from a dial deliberately set to 0.
  */
 export type ReportCuration = {
+  hasSavedSelection: boolean;
   title: string | null;
   clientName: string | null;
   summary: string | null;
@@ -601,6 +602,7 @@ export type ReportCuration = {
 };
 
 const EMPTY_CURATION: ReportCuration = {
+  hasSavedSelection: false,
   title: null,
   clientName: null,
   summary: null,
@@ -636,6 +638,7 @@ export async function getReportCuration(
   const num = (value: unknown) =>
     value === null || value === undefined ? null : Number(value);
   return {
+    hasSavedSelection: true,
     title: (row.title as string | null) ?? null,
     clientName: (row.client_name as string | null) ?? null,
     summary: (row.summary as string | null) ?? null,

@@ -7,6 +7,7 @@ Private media-monitoring dashboard and daily digest system for 66 Outside the Be
 - Tracks priority media sources, broadcast outlets, and public social/search-visible sources.
 - Labels coverage as confirmed, likely, uncertain, or noise.
 - Collects from free public feeds: Google News RSS and Bing News RSS (the news backbone), plus `old.reddit.com` RSS for public social. GDELT is attempted as a best-effort bonus and never blocks a run.
+- Optional Google Alerts: set each alert to "Deliver to: RSS feed" and list the feed URLs in `GOOGLE_ALERTS_FEEDS`. Alerts catch blogs and small sites Google News search misses; a story both catch is kept once.
 - Optional TV/radio/web coverage via Metro Monitor (a paid subscription's saved query); TV/radio is the one source-type free RSS can't reach.
 - Sends a 6:30 AM Eastern weekday digest.
 - Sends weekend email only when a critical/breaking threshold is met.

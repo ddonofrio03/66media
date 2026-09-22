@@ -7,6 +7,7 @@ import {
 import { collectSocialItems, drainPendingApifyRuns } from "@/lib/social";
 import { collectBlueskyItems } from "@/lib/bluesky";
 import { collectMetroMonitorItems } from "@/lib/metro-monitor";
+import { collectGoogleAlertsItems } from "@/lib/google-alerts";
 import { collectXOfficialItems, isXOfficialEnabled } from "@/lib/x-official";
 import { enrichYouTubeTranscripts } from "@/lib/youtube-captions";
 import { refineClassifications } from "@/lib/ai-classify";
@@ -96,6 +97,10 @@ export async function collectDigestItems(
     // a search-engine copy and keeps its broadcast classification.
     { name: "Media Feeds", run: () => collectFeedItems(MEDIA_FEEDS) },
     { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
+    // The user's own Google Alerts, delivered as RSS. Runs after Google News so
+    // a story both caught keeps the Google News copy (see dedupeRawItems).
+    // Silent [] when GOOGLE_ALERTS_FEEDS is unset.
+    { name: "Google Alerts", run: () => collectGoogleAlertsItems() },
     { name: "Reddit", run: () => collectRedditItems(exactQueries) },
     // Free/cheap social sources run on EVERY collection (poller included):
     // Bluesky is free (gated on its login env vars, silent [] otherwise) and
@@ -523,6 +528,7 @@ function sortDigestItems(a: DigestItem, b: DigestItem) {
 function dedupeRawItems(items: RawItem[]) {
   const seen = new Set<string>();
   const seenTitles = new Set<string>();
+  const seenBareTitles = new Set<string>();
   const deduped: RawItem[] = [];
 
   for (const item of items) {
@@ -536,10 +542,18 @@ function dedupeRawItems(items: RawItem[]) {
     if (seen.has(key) || (outletTitleKey && seenTitles.has(outletTitleKey))) {
       continue;
     }
+    // Google Alerts names the outlet by host ("wtop.com") where Google News
+    // names it by publisher ("WTOP"), so the outlet-scoped key can't match
+    // them. An alert whose headline was already collected is dropped outright:
+    // alerts are here for what the other providers miss.
+    if (item.provider === "Google Alerts" && titleKey && seenBareTitles.has(titleKey)) {
+      continue;
+    }
 
     seen.add(key);
     if (outletTitleKey) {
       seenTitles.add(outletTitleKey);
+      seenBareTitles.add(titleKey);
     }
     deduped.push(item);
   }

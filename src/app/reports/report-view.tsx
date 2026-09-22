@@ -266,7 +266,7 @@ export default function ReportView({
   const [title, setTitle] = useState(
     curation.title ??
       (report.range.period === "weekly"
-        ? "Weekly Earned Media Report"
+        ? "Executive Summary"
         : report.range.period === "monthly"
           ? "Monthly Earned Media Report"
           : "Earned Media Report"),

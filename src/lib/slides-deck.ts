@@ -8,6 +8,7 @@ import {
   type SentimentMix,
 } from "@/lib/report";
 import type { SentimentTrend } from "@/lib/report-insights";
+import { buildWeeklyDeck } from "@/lib/weekly-slides";
 
 /**
  * Renders a report as an 8.5×11 portrait PowerPoint deck, matching the layout
@@ -76,6 +77,8 @@ export type DeckOptions = {
   mediaThemes?: string[];
   socialThemes?: string[];
   sentimentTrend?: SentimentTrend;
+  /** Oldest to newest, ending with the current week. */
+  weeklyHistory?: Report[];
   /** Hand-set dials. Null/undefined = print the calculated value. */
   mediaScoreOverride?: number | null;
   socialScoreOverride?: number | null;
@@ -98,6 +101,9 @@ export async function buildReportDeck(
   report: Report,
   options: DeckOptions,
 ): Promise<Buffer> {
+  if (report.range.period === "weekly") {
+    return buildWeeklyDeck(report, options);
+  }
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: "LETTER_PORTRAIT", width: PAGE_W, height: PAGE_H });
   pptx.layout = "LETTER_PORTRAIT";

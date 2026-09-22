@@ -66,10 +66,14 @@ export async function POST(request: Request) {
 
   // The prior period (for the sentiment trend line) and the week's themes are
   // only needed for the deck, so they're computed here rather than in getReport.
-  const priorReport = await getReport(previousRange(range), q);
+  const priorRange = previousRange(range);
   const newsItems = report.items.filter((i) => i.sourceType !== "social");
   const socialItems = report.items.filter((i) => i.sourceType === "social");
-  const [mediaThemes, socialThemes] = await Promise.all([
+  const [priorReport, olderReport, mediaThemes, socialThemes] = await Promise.all([
+    getReport(priorRange, q),
+    range.period === "weekly"
+      ? getReport(previousRange(priorRange), q)
+      : Promise.resolve(null),
     extractThemes(newsItems, "media"),
     extractThemes(socialItems, "social"),
   ]);
@@ -103,6 +107,7 @@ export async function POST(request: Request) {
     mediaThemes,
     socialThemes,
     sentimentTrend,
+    weeklyHistory: olderReport ? [olderReport, priorReport, report] : undefined,
     // Hand-set dials from the saved curation, so a deck prints the number the
     // analyst approved on screen rather than recalculating past it.
     mediaScoreOverride: curation.mediaScore,

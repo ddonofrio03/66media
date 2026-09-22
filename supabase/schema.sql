@@ -53,7 +53,11 @@ create table if not exists public.digest_items (
   -- (100 / 50 / 0), so a report's dial is the mean of every scored item's
   -- effective score whether it was set by bucket or by number. Null means
   -- "use the bucket".
-  sentiment_score smallint check (sentiment_score between 0 and 100)
+  sentiment_score smallint check (sentiment_score between 0 and 100),
+  -- Which collector found this item (e.g. "Google News", "Metro Monitor",
+  -- "Google Alerts"). Internal-only: shown on the dashboard/archive, never in
+  -- the client-facing report. Null for rows collected before this migration.
+  provider text
 );
 
 -- Migration for pre-existing databases (run once in the SQL editor):
@@ -80,6 +84,10 @@ create table if not exists public.digest_items (
 -- alter table public.digest_items
 --   add column if not exists sentiment_score smallint
 --     check (sentiment_score between 0 and 100);
+--
+-- Provider (which collector found this item) migration (run once in the SQL editor):
+-- alter table public.digest_items
+--   add column if not exists provider text;
 --
 -- create table if not exists public.report_curation (
 --   period       text not null,

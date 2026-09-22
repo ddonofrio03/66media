@@ -57,6 +57,10 @@ export type DigestItem = {
   /** Deep link to the moment of the mention, for playable-clip embeds. */
   clipUrl?: string;
   engagement?: Engagement;
+  /** Which collector found this (e.g. "Google News", "Metro Monitor",
+   *  "Google Alerts"). Internal-only: shown on the dashboard/archive for the
+   *  analyst's own understanding, never in the client-facing report. */
+  provider?: string;
 };
 
 export type DigestSnapshot = {

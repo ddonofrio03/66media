@@ -209,6 +209,7 @@ function StoryCard({ item }: { item: ArchiveItem }) {
         {item.source}
         {timeLabel ? ` · ${timeLabel}` : ""}
         {LABELS[item.label] ? ` · ${LABELS[item.label]}` : ""}
+        {item.provider ? ` · via ${item.provider}` : ""}
       </p>
       {item.snippet && (
         <p className="mt-2 text-sm leading-6">{item.snippet}</p>

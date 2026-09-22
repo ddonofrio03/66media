@@ -102,6 +102,7 @@ export async function upsertCollectedItems(
     transcript: items[index].transcript,
     clip_url: items[index].clipUrl,
     engagement: items[index].engagement,
+    provider: items[index].provider,
   }));
 
   let { error } = await supabase
@@ -125,7 +126,13 @@ export async function upsertCollectedItems(
   }
 }
 
-const ENRICHMENT_COLUMNS = ["byline", "transcript", "clip_url", "engagement"];
+const ENRICHMENT_COLUMNS = [
+  "byline",
+  "transcript",
+  "clip_url",
+  "engagement",
+  "provider",
+];
 
 /** Stamp the items that actually went out in today's digest as reported. */
 export async function markReported(
@@ -215,6 +222,7 @@ export type ArchiveItem = {
   feedback: string | null;
   sentiment: string | null;
   sentimentSource: string | null;
+  provider: string | null;
 };
 
 /**
@@ -279,6 +287,7 @@ export async function getArchiveItems(opts: {
     feedback: (row.feedback as string | null) ?? null,
     sentiment: (row.sentiment as string | null) ?? null,
     sentimentSource: (row.sentiment_source as string | null) ?? null,
+    provider: (row.provider as string | null) ?? null,
   }));
 
   return { items, truncated };
@@ -482,13 +491,18 @@ export async function getFeedbackExamples(): Promise<{
  * database may have any prefix of these applied.
  */
 const OPTIONAL_COLUMN_SETS = [
+  ", feedback, sentiment, sentiment_source, provider",
   ", feedback, sentiment, sentiment_source",
   ", feedback",
   "",
 ];
 
 function isMissingOptionalColumn(message: string): boolean {
-  return message.includes("feedback") || message.includes("sentiment");
+  return (
+    message.includes("feedback") ||
+    message.includes("sentiment") ||
+    message.includes("provider")
+  );
 }
 
 /**
@@ -559,6 +573,7 @@ export async function getSocialItems(opts: {
     feedback: (row.feedback as string | null) ?? null,
     sentiment: (row.sentiment as string | null) ?? null,
     sentimentSource: (row.sentiment_source as string | null) ?? null,
+    provider: (row.provider as string | null) ?? null,
   }));
 }
 

@@ -508,6 +508,79 @@ export default function ReportView({
     });
   }
 
+  const mediaItems = report.items.filter((item) => item.sourceType !== "social");
+  const socialItems = report.items.filter((item) => item.sourceType === "social");
+
+  function renderMentionTable(items: ReportItem[]) {
+    return (
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-[#d0ccc9] bg-white">
+        <table className="report-table w-full border-collapse">
+          <thead>
+            <tr>
+              <th className="no-print">Feature</th>
+              <th>Mention</th>
+              <th>Publisher</th>
+              <th>Type</th>
+              <th className="no-print">Sentiment</th>
+              <th>Date</th>
+              <th>Link</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.id}>
+                <td className="no-print text-center">
+                  <input
+                    type="checkbox"
+                    checked={featuredIds.has(item.id)}
+                    onChange={() => toggleFeatured(item.id)}
+                    aria-label={`Feature ${item.title}`}
+                    className="h-4 w-4 accent-[var(--accent)]"
+                  />
+                </td>
+                <td>
+                  <strong className="block leading-5">{item.title}</strong>
+                  {item.snippet && (
+                    <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+                      {item.snippet}
+                    </span>
+                  )}
+                </td>
+                <td>{item.source}</td>
+                <td>{typeLabel(item)}</td>
+                <td className="no-print">
+                  <SentimentControl
+                    id={item.id}
+                    initial={item.sentiment}
+                    initialSource={item.sentimentSource}
+                    initialScore={item.sentimentScore}
+                    onChange={(value, score) =>
+                      setSentimentEdits((edits) => ({
+                        ...edits,
+                        [item.id]: { value, score },
+                      }))
+                    }
+                  />
+                </td>
+                <td>{formatItemDate(item)}</td>
+                <td>
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-bold text-[var(--accent)] underline decoration-1 underline-offset-2"
+                  >
+                    Open
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   return (
     <div className="report-shell">
       <section className="no-print mb-5 rounded-2xl border border-[var(--line)] bg-white p-5 shadow-sm">
@@ -1114,12 +1187,13 @@ export default function ReportView({
           </div>
         </section>
 
-        {/* Coverage index */}
+        {/* Coverage index. Traditional media and social are listed separately:
+            the weekly report keeps them in separate sections, never lumped. */}
         <section className="report-page p-5 md:p-10">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="report-kicker">Coverage index</p>
-              <h2 className="report-heading">All captured mentions</h2>
+              <h2 className="report-heading">All media mentions</h2>
           <div className="brand-rule"><span /><span /><span /></div>
             </div>
             <p className="no-print max-w-md text-xs leading-5 text-[var(--muted)]">
@@ -1128,77 +1202,28 @@ export default function ReportView({
             </p>
           </div>
 
-          {report.items.length ? (
-            <div className="mt-6 overflow-x-auto rounded-2xl border border-[#d0ccc9] bg-white">
-              <table className="report-table w-full border-collapse">
-                <thead>
-                  <tr>
-                    <th className="no-print">Feature</th>
-                    <th>Mention</th>
-                    <th>Publisher</th>
-                    <th>Type</th>
-                    <th className="no-print">Sentiment</th>
-                    <th>Date</th>
-                    <th>Link</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.items.map((item) => (
-                    <tr key={item.id}>
-                      <td className="no-print text-center">
-                        <input
-                          type="checkbox"
-                          checked={featuredIds.has(item.id)}
-                          onChange={() => toggleFeatured(item.id)}
-                          aria-label={`Feature ${item.title}`}
-                          className="h-4 w-4 accent-[var(--accent)]"
-                        />
-                      </td>
-                      <td>
-                        <strong className="block leading-5">{item.title}</strong>
-                        {item.snippet && (
-                          <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
-                            {item.snippet}
-                          </span>
-                        )}
-                      </td>
-                      <td>{item.source}</td>
-                      <td>{typeLabel(item)}</td>
-                      <td className="no-print">
-                        <SentimentControl
-                          id={item.id}
-                          initial={item.sentiment}
-                          initialSource={item.sentimentSource}
-                          initialScore={item.sentimentScore}
-                          onChange={(value, score) =>
-                            setSentimentEdits((edits) => ({
-                              ...edits,
-                              [item.id]: { value, score },
-                            }))
-                          }
-                        />
-                      </td>
-                      <td>{formatItemDate(item)}</td>
-                      <td>
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="font-bold text-[var(--accent)] underline decoration-1 underline-offset-2"
-                        >
-                          Open
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {mediaItems.length ? (
+            renderMentionTable(mediaItems)
           ) : (
             <div className="mt-6">
               <EmptyState>
-                No mentions were captured in this period. The daily digest and
-                real-time alerts continue to monitor; quiet periods are normal.
+                No online news or broadcast mentions were captured in this
+                period. Quiet periods are normal.
+              </EmptyState>
+            </div>
+          )}
+
+          <div className="mt-12">
+            <h2 className="report-heading">All social media mentions</h2>
+            <div className="brand-rule"><span /><span /><span /></div>
+          </div>
+
+          {socialItems.length ? (
+            renderMentionTable(socialItems)
+          ) : (
+            <div className="mt-6">
+              <EmptyState>
+                No public social mentions were captured in this period.
               </EmptyState>
             </div>
           )}

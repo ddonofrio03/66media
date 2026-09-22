@@ -1,6 +1,7 @@
 import { isPersistenceEnabled } from "@/lib/db";
 import SiteNav from "@/components/site-nav";
 import AddMentionForm from "@/components/add-mention-form";
+import BatchMentionUpload from "@/components/batch-mention-upload";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,13 @@ export default function AddMentionPage() {
 
           <section className="mt-6 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
             <AddMentionForm canEdit={canEdit} />
+          </section>
+
+          <section className="mt-6 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+            <h2 className="text-xl font-semibold">Add many at once</h2>
+            <div className="mt-3">
+              <BatchMentionUpload canEdit={canEdit} />
+            </div>
           </section>
         </div>
       </main>

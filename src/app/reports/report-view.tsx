@@ -17,6 +17,7 @@ import { formatReach, reachFor } from "@/lib/outlets";
 
 /** Saved analyst edits for this period; mirrors ReportCuration in digest-store. */
 type Curation = {
+  hasSavedSelection: boolean;
   title: string | null;
   clientName: string | null;
   summary: string | null;
@@ -265,7 +266,7 @@ export default function ReportView({
   const [title, setTitle] = useState(
     curation.title ??
       (report.range.period === "weekly"
-        ? "Weekly Earned Media Report"
+        ? "Executive Summary"
         : report.range.period === "monthly"
           ? "Monthly Earned Media Report"
           : "Earned Media Report"),
@@ -275,7 +276,7 @@ export default function ReportView({
   );
   const [summary, setSummary] = useState(initialSummary);
   const [featuredIds, setFeaturedIds] = useState<Set<string>>(() =>
-    curation.featuredIds.length
+    curation.hasSavedSelection
       ? new Set(curation.featuredIds)
       : new Set(
           report.items
@@ -299,24 +300,65 @@ export default function ReportView({
   const [socialOverride, setSocialOverride] = useState<number | null>(
     curation.socialScore,
   );
+  const [saveState, setSaveState] = useState<"ready" | "unsaved" | "saving" | "saved" | "error">("ready");
+  const [saveError, setSaveError] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const saveVersion = useRef(0);
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const pendingSave = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const saveCuration = useCallback(
-    (patch: Record<string, unknown>) => {
-      void fetch("/api/curation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          period: report.range.period,
-          rangeKey: report.range.key,
-          ...patch,
-        }),
-      }).catch(() => {
-        // Curation is a convenience layer; a failed save must never block the
-        // analyst's editing. The value stays on screen and the next edit
-        // retries.
+    (patch: Record<string, unknown>, version: number): Promise<boolean> => {
+      // Serialize writes so an older response cannot overwrite a later edit.
+      const operation = saveQueue.current.then(async () => {
+        if (version === saveVersion.current) setSaveState("saving");
+        try {
+          const response = await fetch("/api/curation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              period: report.range.period,
+              rangeKey: report.range.key,
+              ...patch,
+            }),
+          });
+          const result = (await response.json()) as { ok?: boolean; error?: string };
+          if (!response.ok || !result.ok) {
+            throw new Error(result.error ?? `Save failed (HTTP ${response.status}).`);
+          }
+          if (version === saveVersion.current) {
+            setSaveError("");
+            setSaveState("saved");
+          }
+          return true;
+        } catch (error) {
+          if (version === saveVersion.current) {
+            setSaveError(error instanceof Error ? error.message : "Could not save report edits.");
+            setSaveState("error");
+          }
+          return false;
+        }
       });
+      saveQueue.current = operation;
+      return operation;
     },
     [report.range.period, report.range.key],
+  );
+
+  const saveDraft = useCallback(
+    (version: number) =>
+      saveCuration(
+        {
+          title,
+          clientName,
+          summary,
+          featuredIds: [...featuredIds],
+          mediaScore: mediaOverride,
+          socialScore: socialOverride,
+        },
+        version,
+      ),
+    [title, clientName, summary, featuredIds, mediaOverride, socialOverride, saveCuration],
   );
 
   // Persist the written fields and featured picks a beat after typing stops,
@@ -328,16 +370,17 @@ export default function ReportView({
       hydrated.current = true;
       return;
     }
-    const timer = setTimeout(() => {
-      saveCuration({
-        title,
-        clientName,
-        summary,
-        featuredIds: [...featuredIds],
-      });
+    const version = ++saveVersion.current;
+    setSaveState("unsaved");
+    pendingSave.current = setTimeout(() => {
+      pendingSave.current = null;
+      void saveDraft(version);
     }, 800);
-    return () => clearTimeout(timer);
-  }, [title, clientName, summary, featuredIds, saveCuration]);
+    return () => {
+      if (pendingSave.current) clearTimeout(pendingSave.current);
+      pendingSave.current = null;
+    };
+  }, [saveDraft]);
 
   const mediaSentiment = useMemo(
     () => applySentimentEdits(report, sentimentEdits, "media"),
@@ -361,6 +404,14 @@ export default function ReportView({
    * (also the automatic fallback when Drive isn't configured).
    */
   async function exportDeck(destination: "drive" | "download") {
+    if (pendingSave.current) {
+      clearTimeout(pendingSave.current);
+      pendingSave.current = null;
+    }
+    if (saveState !== "ready" && !(await saveDraft(saveVersion.current))) {
+      setExportState({ kind: "error", message: "Report edits were not saved. Retry the save before exporting." });
+      return;
+    }
     setExportState({ kind: "working" });
     const payload = {
       params: Object.fromEntries(new URLSearchParams(window.location.search)),
@@ -393,6 +444,7 @@ export default function ReportView({
         link.click();
         URL.revokeObjectURL(url);
         setExportState({ kind: "idle" });
+        setReviewOpen(false);
         return;
       }
 
@@ -410,6 +462,7 @@ export default function ReportView({
         url: data.webViewLink,
         name: data.name ?? title,
       });
+      setReviewOpen(false);
     } catch (error) {
       setExportState({
         kind: "error",
@@ -485,13 +538,16 @@ export default function ReportView({
             </button>
             <button
               type="button"
-              onClick={() => exportDeck("drive")}
+              onClick={() => {
+                setExportState({ kind: "idle" });
+                setReviewOpen(true);
+              }}
               disabled={exportState.kind === "working"}
               className="rounded-lg border border-[var(--line)] px-4 py-2 text-sm font-bold hover:bg-[#f7f9f8] disabled:opacity-50"
             >
               {exportState.kind === "working"
                 ? "Building deck…"
-                : "Send to Google Slides"}
+                : "Review Slides draft"}
             </button>
             <button
               type="button"
@@ -501,6 +557,28 @@ export default function ReportView({
               Print / Save PDF
             </button>
           </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs" role="status" aria-live="polite">
+          <span className={saveState === "error" ? "font-semibold text-[#c0392b]" : "text-[var(--muted)]"}>
+            {saveState === "saving"
+              ? "Saving report edits…"
+              : saveState === "unsaved"
+                ? "Unsaved changes"
+                : saveState === "saved"
+                  ? "Report edits saved"
+                  : saveState === "error"
+                    ? `Save failed: ${saveError}`
+                    : "Report ready"}
+          </span>
+          {saveState === "error" && (
+            <button
+              type="button"
+              onClick={() => void saveDraft(saveVersion.current)}
+              className="font-bold text-[#105cae] underline"
+            >
+              Retry save
+            </button>
+          )}
         </div>
         {exportState.kind === "done" ? (
           <p className="mt-3 text-xs leading-5">
@@ -536,6 +614,66 @@ export default function ReportView({
           export carries your edited title, summary, and featured selection.
         </p>
       </section>
+
+      {reviewOpen && (
+        <div className="no-print fixed inset-0 z-50 flex items-center justify-center bg-[#0a1f3c]/70 p-4">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="review-draft-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && exportState.kind !== "working") {
+                setReviewOpen(false);
+              }
+            }}
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+          >
+            <h2 id="review-draft-title" className="text-2xl font-bold text-[#0a1f3c]">
+              Review Slides draft
+            </h2>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Check the content that will go into the editable portrait deck. This review does not show the final slide layout.
+            </p>
+            <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+              <div><dt className="font-bold">Title</dt><dd>{title}</dd></div>
+              <div><dt className="font-bold">Period</dt><dd>{report.range.label}</dd></div>
+              <div><dt className="font-bold">Client / program</dt><dd>{clientName}</dd></div>
+              <div><dt className="font-bold">Coverage</dt><dd>{report.mediaMentions} media mentions · {report.socialMentions} social posts</dd></div>
+            </dl>
+            <h3 className="mt-6 text-sm font-bold uppercase tracking-wide text-[#105cae]">Executive summary</h3>
+            <p className="mt-2 whitespace-pre-wrap rounded-lg bg-[#f7f6f4] p-3 text-sm leading-6">
+              {summary.trim() || "No summary entered."}
+            </p>
+            <h3 className="mt-6 text-sm font-bold uppercase tracking-wide text-[#105cae]">
+              Featured mentions ({featured.length})
+            </h3>
+            {featured.length ? (
+              <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm">
+                {featured.map((item) => <li key={item.id}>{item.title} <span className="text-[var(--muted)]">· {item.source}</span></li>)}
+              </ol>
+            ) : (
+              <p className="mt-2 text-sm text-[var(--muted)]">No featured mentions selected.</p>
+            )}
+            <p className="mt-5 text-xs leading-5 text-[var(--muted)]">
+              The deck also includes the media, relevant news, and social mention lists. Comments and screenshots remain analyst-editable placeholders.
+            </p>
+            {exportState.kind === "error" && (
+              <p className="mt-4 text-sm font-semibold text-[#c0392b]" role="alert">{exportState.message}</p>
+            )}
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button type="button" autoFocus onClick={() => setReviewOpen(false)} className="rounded-lg border border-[var(--line)] px-4 py-2 text-sm font-bold">
+                Keep editing
+              </button>
+              <button type="button" onClick={() => void exportDeck("download")} disabled={exportState.kind === "working"} className="rounded-lg border border-[var(--line)] px-4 py-2 text-sm font-bold disabled:opacity-50">
+                Download .pptx
+              </button>
+              <button type="button" onClick={() => void exportDeck("drive")} disabled={exportState.kind === "working"} className="rounded-lg bg-[#105cae] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+                {exportState.kind === "working" ? "Building deck…" : "Send to Google Slides"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <article className="report-document overflow-hidden rounded-[28px] border border-[#d0ccc9] bg-[#f1efec] shadow-xl">
         {/* Cover — navy with the brand's orange frame accents */}
@@ -752,7 +890,6 @@ export default function ReportView({
               override={mediaOverride}
               onOverride={(value) => {
                 setMediaOverride(value);
-                saveCuration({ mediaScore: value });
               }}
             />
             <SentimentMeter
@@ -761,7 +898,6 @@ export default function ReportView({
               override={socialOverride}
               onOverride={(value) => {
                 setSocialOverride(value);
-                saveCuration({ socialScore: value });
               }}
             />
           </div>

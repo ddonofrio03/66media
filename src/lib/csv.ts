@@ -1,4 +1,8 @@
-export function parseCsv(text: string): string[][] {
+/**
+ * Parses CSV, or tab-separated text when `delimiter` is "\t" (what a
+ * spreadsheet puts on the clipboard when rows are copied).
+ */
+export function parseCsv(text: string, delimiter = ","): string[][] {
   const rows: string[][] = [];
   let field = "";
   let row: string[] = [];
@@ -19,7 +23,7 @@ export function parseCsv(text: string): string[][] {
       continue;
     }
 
-    if (char === "," && !inQuotes) {
+    if (char === delimiter && !inQuotes) {
       row.push(field);
       field = "";
       continue;

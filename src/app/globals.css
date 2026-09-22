@@ -162,21 +162,14 @@ textarea {
   width: 420px;
 }
 
-.report-orb-gold {
-  background: #f8a829;
-  bottom: -160px;
-  height: 380px;
-  left: -120px;
-  opacity: 0.14;
-  width: 380px;
-}
-
-.report-orb-small {
-  background: #ee7729;
-  height: 180px;
-  right: 12%;
-  top: -60px;
-  width: 180px;
+.report-orb-blue {
+  background: #105cae;
+  filter: none;
+  height: 420px;
+  opacity: 0.92;
+  right: -120px;
+  top: -160px;
+  width: 420px;
 }
 
 .report-table {

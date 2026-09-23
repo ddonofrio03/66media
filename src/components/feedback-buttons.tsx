@@ -39,7 +39,7 @@ export default function FeedbackButtons({
         title="Relevant — more like this"
         aria-pressed={value === "up"}
         onClick={() => send("up")}
-        className={`rounded-md border px-1.5 py-0.5 text-xs leading-none ${
+        className={`rounded-md border px-1.5 py-0.5 text-xs leading-none transition-colors duration-150 ${
           value === "up"
             ? "border-[var(--accent)] bg-[var(--accent)] text-white"
             : "border-[var(--line)] text-[var(--muted)] opacity-60 hover:opacity-100"
@@ -53,7 +53,7 @@ export default function FeedbackButtons({
         title="Not relevant — fewer like this"
         aria-pressed={value === "down"}
         onClick={() => send("down")}
-        className={`rounded-md border px-1.5 py-0.5 text-xs leading-none ${
+        className={`rounded-md border px-1.5 py-0.5 text-xs leading-none transition-colors duration-150 ${
           value === "down"
             ? "border-[var(--critical)] bg-[var(--critical)] text-white"
             : "border-[var(--line)] text-[var(--muted)] opacity-60 hover:opacity-100"

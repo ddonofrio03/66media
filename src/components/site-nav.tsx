@@ -24,7 +24,7 @@ const LINKS: Array<{ key: Section; href: string; label: string }> = [
 
 export default function SiteNav({ active }: { active?: Section }) {
   return (
-    <header className="site-nav bg-[var(--panel)]">
+    <header className="site-nav sticky top-0 z-20 bg-[var(--panel)]/80 backdrop-blur-md backdrop-saturate-150">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 border-b border-[var(--line)] px-5 py-3 md:px-8">
         <Link href="/" aria-label="66 Express Outside the Beltway — home">
           <Image
@@ -56,7 +56,7 @@ export default function SiteNav({ active }: { active?: Section }) {
                   key={link.key}
                   href={link.href}
                   aria-current={isActive ? "page" : undefined}
-                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors duration-150 ${
                     isActive
                       ? "bg-[var(--accent)] text-white"
                       : "border border-[var(--line)] text-[var(--foreground)] hover:bg-[#fbfcfc]"

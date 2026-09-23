@@ -41,6 +41,44 @@ body {
     color: inherit;
     text-decoration: none;
   }
+
+  /* Size-specific tracking: large headings read too loose at default
+     spacing and want to tighten; body text stays near zero. Tailwind's own
+     text-size utilities still control line-height/font-size, so this only
+     adds the tracking most of the app never set explicitly. */
+  h1 {
+    letter-spacing: -0.02em;
+  }
+  h2 {
+    letter-spacing: -0.015em;
+  }
+  h3 {
+    letter-spacing: -0.01em;
+  }
+}
+
+/* The sticky nav's translucency is a floating material layer over scrolling
+   content; when the user has asked for less transparency, go solid instead
+   of fighting that preference. */
+@media (prefers-reduced-transparency: reduce) {
+  .site-nav {
+    background: var(--panel) !important;
+    backdrop-filter: none !important;
+  }
+}
+
+/* Instant, no-lag feedback on press for every button — feedback lives on
+   the press, not the release. Skipped under reduced motion, where a flat
+   state change communicates the same thing without the transform. */
+@media (prefers-reduced-motion: no-preference) {
+  button:not(:disabled) {
+    transition:
+      transform 120ms ease-out,
+      opacity 120ms ease-out;
+  }
+  button:not(:disabled):active {
+    transform: scale(0.96);
+  }
 }
 
 button,

@@ -11,15 +11,15 @@ export default async function SourcesPage() {
     <SiteNav active="sources" />
     <main className="min-h-screen px-5 py-6 md:px-8">
       <div className="mx-auto max-w-7xl">
-        <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5 md:flex-row md:items-end md:justify-between">
+        <header className="flex flex-col gap-4 border-b-4 border-[var(--foreground)] pb-5 md:flex-row md:items-end md:justify-between">
           <div>
             <Link
               href="/"
-              className="text-sm font-semibold text-[var(--accent)]"
+              className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-[var(--accent)]"
             >
-              Dashboard
+              ← Dashboard
             </Link>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal md:text-4xl">
+            <h1 className="mt-2 text-3xl font-black tracking-tight md:text-4xl">
               Sources
             </h1>
             <p className="mt-2 max-w-3xl text-base text-[var(--muted)]">
@@ -28,13 +28,19 @@ export default async function SourcesPage() {
               without being treated as fully trusted.
             </p>
           </div>
-          <div className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4 text-sm">
-            <strong>{summary.total}</strong> total sources ·{" "}
-            <strong>{summary.withTwitter}</strong> social handles
+          <div className="border-t-2 border-[var(--foreground)] bg-[var(--panel)] p-4 text-sm">
+            <span className="font-mono text-2xl font-bold tabular-nums">
+              {summary.total}
+            </span>{" "}
+            total sources ·{" "}
+            <span className="font-mono text-2xl font-bold tabular-nums">
+              {summary.withTwitter}
+            </span>{" "}
+            social handles
           </div>
         </header>
 
-        <section className="mt-6 overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel)]">
+        <section className="mt-6 overflow-hidden rounded-sm border border-[var(--line)] bg-[var(--panel)]">
           <div className="overflow-x-auto">
             <table className="data-table min-w-[980px]">
               <thead>
@@ -91,16 +97,16 @@ export default async function SourcesPage() {
 
 function Status({ value }: { value: string }) {
   const styles: Record<string, string> = {
-    verified: "bg-[#e6f3f1] text-[var(--accent-strong)]",
+    verified: "bg-[var(--confirmed-soft)] text-[var(--confirmed)]",
     needs_verification: "bg-[#fff5df] text-[var(--warning)]",
-    likely_inactive: "bg-[#fdecec] text-[var(--critical)]",
+    likely_inactive: "bg-[var(--accent-soft)] text-[var(--accent)]",
     merged_or_redirect: "bg-[#e9f0f7] text-[var(--info)]",
   };
 
   return (
     <span
-      className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${
-        styles[value] ?? "bg-[#eceff1] text-[var(--muted)]"
+      className={`font-mono inline-flex rounded-sm px-2 py-1 text-[11px] font-bold uppercase tracking-wide ${
+        styles[value] ?? "border border-[var(--line)] text-[var(--muted)]"
       }`}
     >
       {value.replaceAll("_", " ")}

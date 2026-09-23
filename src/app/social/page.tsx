@@ -46,13 +46,13 @@ export default async function SocialPage({
       <SiteNav active="social" />
       <main className="min-h-screen px-5 py-6 md:px-8">
         <div className="mx-auto flex max-w-7xl flex-col gap-6">
-          <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5">
+          <header className="flex flex-col gap-4 border-b-4 border-[var(--foreground)] pb-5">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="text-sm font-semibold uppercase text-[var(--accent)]">
+                <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-[var(--accent)]">
                   Social Media Pulse
                 </p>
-                <h1 className="mt-2 text-3xl font-semibold md:text-4xl">
+                <h1 className="mt-2 text-3xl font-black tracking-tight md:text-4xl">
                   Corridor conversation by platform
                 </h1>
                 <p className="mt-2 max-w-3xl text-base text-[var(--muted)]">
@@ -68,7 +68,7 @@ export default async function SocialPage({
                     key={option}
                     href={`/social?days=${option}`}
                     aria-current={option === days ? "page" : undefined}
-                    className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+                    className={`font-mono rounded-sm px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors duration-150 ${
                       option === days
                         ? "bg-[var(--accent)] text-white"
                         : "border border-[var(--line)] hover:bg-[#fbfcfc]"
@@ -94,12 +94,12 @@ export default async function SocialPage({
           </section>
 
           {!enabled ? (
-            <section className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5 text-sm text-[var(--muted)]">
+            <section className="rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5 text-sm text-[var(--muted)]">
               The social view needs the Supabase archive (SUPABASE_URL +
               SUPABASE_SERVICE_ROLE_KEY).
             </section>
           ) : orderedGroups.length === 0 ? (
-            <section className="rounded-lg border border-dashed border-[var(--line)] bg-[var(--panel)] p-8 text-center text-sm text-[var(--muted)]">
+            <section className="rounded-sm border border-dashed border-[var(--line)] bg-[var(--panel)] p-8 text-center text-sm text-[var(--muted)]">
               No relevant social posts captured in the last {days} days.
               Collection is running — corridor chatter will appear here (and in
               the daily digest) as it happens.
@@ -108,11 +108,11 @@ export default async function SocialPage({
             orderedGroups.map(([platform, posts]) => (
               <section
                 key={platform}
-                className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5"
+                className="rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5"
               >
                 <h2 className="text-xl font-semibold">
                   {platform}{" "}
-                  <span className="text-sm font-semibold text-[var(--muted)]">
+                  <span className="font-mono text-xs font-normal text-[var(--muted)]">
                     · {posts.length} {posts.length === 1 ? "post" : "posts"}
                   </span>
                 </h2>
@@ -157,9 +157,11 @@ function Metric({
   detail?: string;
 }) {
   return (
-    <div className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4">
-      <p className="text-sm font-semibold text-[var(--muted)]">{label}</p>
-      <p className="mt-2 text-3xl font-semibold">{value}</p>
+    <div className="border-t-2 border-[var(--foreground)] bg-[var(--panel)] p-4">
+      <p className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--muted)]">
+        {label}
+      </p>
+      <p className="font-mono mt-2 text-4xl font-bold tabular-nums">{value}</p>
       {detail && <p className="mt-1 text-sm text-[var(--muted)]">{detail}</p>}
     </div>
   );
@@ -179,20 +181,26 @@ function Post({ post }: { post: ArchiveItem }) {
     <div className="py-3">
       <div className="flex flex-wrap items-center gap-2">
         {post.priority === "important" && (
-          <span className="rounded-full bg-[#f8e8e8] px-2 py-0.5 text-xs font-semibold text-[var(--critical)]">
-            Important
+          <span className="font-mono -rotate-2 rounded-sm border-2 border-[var(--accent)] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--accent)]">
+            ★ Important
           </span>
         )}
-        <span className="rounded-full bg-[#e6f3f1] px-2 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">
+        <span
+          className={`font-mono rounded-sm px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${
+            post.label === "confirmed_otb"
+              ? "bg-[var(--confirmed-soft)] text-[var(--confirmed)]"
+              : "border border-[var(--line)] text-[var(--muted)]"
+          }`}
+        >
           {LABEL_LABELS[post.label] ?? post.label}
         </span>
-        <span className="text-xs font-semibold text-[var(--muted)]">
+        <span className="font-mono text-[11px] text-[var(--muted)]">
           {post.source}
           {published ? ` · ${published}` : ""}
         </span>
         {post.provider && (
           <span
-            className="rounded-full bg-[var(--panel)] px-2 py-0.5 text-[11px] text-[var(--muted)] ring-1 ring-[var(--line)]"
+            className="font-mono text-[11px] text-[var(--muted)] opacity-70"
             title="Which collector found this (internal, not shown to the client)"
           >
             via {post.provider}

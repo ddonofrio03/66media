@@ -12,8 +12,8 @@ export default async function PreviewPage() {
       <SiteNav active="preview" />
       <main className="min-h-screen px-5 py-6 md:px-8">
         <div className="mx-auto max-w-3xl">
-          <header className="flex flex-col gap-2 border-b border-[var(--line)] pb-5">
-            <h1 className="text-3xl font-semibold tracking-normal md:text-4xl">
+          <header className="flex flex-col gap-2 border-b-4 border-[var(--foreground)] pb-5">
+            <h1 className="text-3xl font-black tracking-tight md:text-4xl">
               Digest Preview
             </h1>
             <p className="max-w-2xl text-base text-[var(--muted)]">
@@ -38,7 +38,7 @@ export default async function PreviewPage() {
             </p>
           </header>
 
-          <section className="mt-6 overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--panel)]">
+          <section className="mt-6 overflow-hidden rounded-sm border border-[var(--line)] bg-[var(--panel)]">
             <iframe
               title="Digest email preview"
               srcDoc={html}

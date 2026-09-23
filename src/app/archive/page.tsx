@@ -91,9 +91,12 @@ export default async function ArchivePage({
       <SiteNav active="archive" />
       <main className="min-h-screen px-5 py-6 md:px-8">
         <div className="mx-auto max-w-4xl">
-          <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5">
+          <header className="flex flex-col gap-4 border-b-4 border-[var(--foreground)] pb-5">
             <div>
-              <h1 className="text-3xl font-semibold tracking-normal md:text-4xl">
+              <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-[var(--accent)]">
+                Archive
+              </p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight md:text-4xl">
                 News
               </h1>
               <p className="mt-2 max-w-2xl text-base text-[var(--muted)]">
@@ -108,12 +111,12 @@ export default async function ArchivePage({
                   name="q"
                   defaultValue={q}
                   placeholder="Search titles, sources, snippets…"
-                  className="w-full rounded-md border border-[var(--line)] bg-[#fbfcfc] px-3 py-2 text-sm"
+                  className="w-full rounded-sm border border-[var(--line)] bg-[#fbfcfc] px-3 py-2 text-sm"
                 />
                 <input type="hidden" name="range" value={range} />
                 <button
                   type="submit"
-                  className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                  className="rounded-sm bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
                 >
                   Search
                 </button>
@@ -125,7 +128,7 @@ export default async function ArchivePage({
                     key={value}
                     href={rangeHref(value)}
                     aria-current={value === range ? "page" : undefined}
-                    className={`rounded-md px-3 py-2 text-sm font-semibold capitalize ${
+                    className={`font-mono rounded-sm px-3 py-2 text-xs font-bold uppercase tracking-wide transition-colors duration-150 ${
                       value === range
                         ? "bg-[var(--accent)] text-white"
                         : "border border-[var(--line)]"
@@ -157,9 +160,9 @@ export default async function ArchivePage({
               </p>
               {grouped.map(([day, dayItems]) => (
                 <section key={day}>
-                  <h2 className="sticky top-0 bg-[var(--background)] py-2 text-lg font-semibold">
+                  <h2 className="font-mono sticky top-0 z-10 bg-[var(--background)] py-2 text-sm font-bold uppercase tracking-wide">
                     {day}{" "}
-                    <span className="text-sm font-normal text-[var(--muted)]">
+                    <span className="font-sans text-sm font-normal normal-case text-[var(--muted)]">
                       · {dayItems.length}
                     </span>
                   </h2>
@@ -184,7 +187,7 @@ function StoryCard({ item }: { item: ArchiveItem }) {
     time && !Number.isNaN(time.getTime()) ? timeFormatter.format(time) : "";
 
   return (
-    <article className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4">
+    <article className="rounded-sm border border-[var(--line)] bg-[var(--panel)] p-4">
       <div className="flex items-start justify-between gap-3">
         <h3 className="text-base font-semibold">
           <a
@@ -198,14 +201,14 @@ function StoryCard({ item }: { item: ArchiveItem }) {
         </h3>
         <div className="flex shrink-0 items-center gap-2">
           {item.priority === "important" && (
-            <span className="rounded-full bg-[#fdecec] px-2 py-1 text-xs font-semibold text-[var(--critical)]">
-              Important
+            <span className="font-mono -rotate-2 rounded-sm border-2 border-[var(--accent)] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--accent)]">
+              ★ Important
             </span>
           )}
           <FeedbackButtons id={item.id} initial={item.feedback} />
         </div>
       </div>
-      <p className="mt-1 text-sm text-[var(--muted)]">
+      <p className="font-mono mt-1 text-[11px] text-[var(--muted)]">
         {item.source}
         {timeLabel ? ` · ${timeLabel}` : ""}
         {LABELS[item.label] ? ` · ${LABELS[item.label]}` : ""}
@@ -220,7 +223,7 @@ function StoryCard({ item }: { item: ArchiveItem }) {
 
 function Notice({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-6 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5 text-sm text-[var(--muted)]">
+    <div className="mt-6 rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5 text-sm text-[var(--muted)]">
       {children}
     </div>
   );

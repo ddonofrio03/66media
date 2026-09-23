@@ -13,9 +13,12 @@ export default function AddMentionPage() {
       <SiteNav active="add" />
       <main className="min-h-screen px-5 py-6 md:px-8">
         <div className="mx-auto max-w-5xl">
-          <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5">
+          <header className="flex flex-col gap-4 border-b-4 border-[var(--foreground)] pb-5">
             <div>
-              <h1 className="mt-2 text-3xl font-semibold tracking-normal md:text-4xl">
+              <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-[var(--accent)]">
+                Manual Entry
+              </p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight md:text-4xl">
                 Add a mention
               </h1>
               <p className="mt-2 max-w-3xl text-base text-[var(--muted)]">
@@ -35,11 +38,11 @@ export default function AddMentionPage() {
             </div>
           </header>
 
-          <section className="mt-6 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+          <section className="mt-6 rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5">
             <AddMentionForm canEdit={canEdit} />
           </section>
 
-          <section className="mt-6 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+          <section className="mt-6 rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5">
             <h2 className="text-xl font-semibold">Add many at once</h2>
             <div className="mt-3">
               <BatchMentionUpload canEdit={canEdit} />

@@ -1,16 +1,27 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f7f8f8;
-  --foreground: #17211f;
-  --muted: #66706d;
+  /* Wire-desk identity: a light, ink-on-paper newsroom/monitoring-desk
+     system (this app IS a coverage control room), not a generic light SaaS
+     palette. Cool, near-neutral paper — not the warm cream that's become
+     an AI-design cliche — with press-stamp red as the one live accent and
+     a deep ticker green reserved for "confirmed/live" status only. */
+  --background: #f5f6f3;
+  --foreground: #17181a;
+  --muted: #62655f;
   --panel: #ffffff;
-  --line: #dce3e0;
-  --accent: #0f766e;
-  --accent-strong: #134e4a;
+  --line: #d7d9d2;
+  --accent: #c4291a;
+  --accent-strong: #921d12;
+  --accent-soft: #fbeae6;
+  --confirmed: #1f6f43;
+  --confirmed-soft: #e4f1e9;
   --warning: #9a5b13;
-  --critical: #a32121;
+  --critical: #c4291a;
   --info: #31527a;
+  /* --font-display / --font-mono come from next/font/google on <html> in
+     layout.tsx (Archivo / JetBrains Mono, self-hosted) — not redeclared
+     here, so the actual loaded font stack is what's used, not a guess. */
 }
 
 * {
@@ -42,19 +53,28 @@ body {
     text-decoration: none;
   }
 
-  /* Size-specific tracking: large headings read too loose at default
-     spacing and want to tighten; body text stays near zero. Tailwind's own
-     text-size utilities still control line-height/font-size, so this only
-     adds the tracking most of the app never set explicitly. */
-  h1 {
-    letter-spacing: -0.02em;
-  }
+  /* Dispatch-headline voice for h1/h2: the bold condensed display face,
+     tightened further than body text ever would be. h3 stays in the body
+     face — most h3s here are small in-card labels, not headlines, and
+     Archivo at that size reads heavy rather than sharp. Tailwind's own
+     text-size utilities still control line-height/font-size; an element
+     with its own explicit tracking-* utility keeps that instead (utilities
+     always win over this base-layer default). */
+  h1,
   h2 {
-    letter-spacing: -0.015em;
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
   }
   h3 {
     letter-spacing: -0.01em;
   }
+}
+
+/* Timestamps, stat numbers, eyebrow labels, source metadata — the teletype
+   voice. Applied as a utility class rather than globally, since it's a
+   deliberate accent, not the whole app's body text. */
+.font-mono {
+  font-family: var(--font-mono);
 }
 
 /* The sticky nav's translucency is a floating material layer over scrolling
@@ -110,8 +130,10 @@ textarea {
 
 .data-table th {
   color: var(--muted);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 

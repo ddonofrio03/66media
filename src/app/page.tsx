@@ -49,15 +49,15 @@ export default async function DashboardPage() {
       <SiteNav active="dashboard" />
       <main className="min-h-screen px-5 py-6 md:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5">
+        <header className="flex flex-col gap-3 border-b-4 border-[var(--foreground)] pb-5">
           <div>
-            <p className="text-sm font-semibold uppercase text-[var(--accent)]">
-              66 Media Monitor
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-[var(--accent)]">
+              Dispatch · {new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric" })}
             </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal md:text-4xl">
+            <h1 className="mt-2 text-4xl font-black leading-[0.95] tracking-tight md:text-5xl">
               Daily coverage control room
             </h1>
-            <p className="mt-2 max-w-3xl text-base text-[var(--muted)]">
+            <p className="mt-3 max-w-3xl text-base text-[var(--muted)]">
               Monitoring 66 Outside the Beltway, 66 EMP, 66 Express Lanes,
               broadcast sources, public social/search-visible mentions, and
               priority local media.
@@ -66,7 +66,7 @@ export default async function DashboardPage() {
         </header>
 
         {weekReport.available && (
-          <section className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+          <section className="rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-semibold">
@@ -114,7 +114,7 @@ export default async function DashboardPage() {
         </section>
 
         <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+          <div className="rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-xl font-semibold">Next Digest</h2>
@@ -123,8 +123,9 @@ export default async function DashboardPage() {
                   items.
                 </p>
               </div>
-              <span className="rounded-full bg-[#e6f3f1] px-3 py-1 text-xs font-semibold text-[var(--accent-strong)]">
-                Email active
+              <span className="font-mono flex items-center gap-1.5 rounded-sm bg-[var(--confirmed-soft)] px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-[var(--confirmed)]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--confirmed)]" />
+                Email Active
               </span>
             </div>
 
@@ -149,7 +150,7 @@ export default async function DashboardPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+          <div className="rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5">
             <h2 className="text-xl font-semibold">Delivery Setup</h2>
             <dl className="mt-4 space-y-3 text-sm">
               <Row label="Recipients" value={monitoringConfig.recipients.join(", ")} />
@@ -160,7 +161,7 @@ export default async function DashboardPage() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+        <section className="rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-xl font-semibold">Seeded Source Mix</h2>
@@ -199,9 +200,11 @@ function Metric({
   detail: string;
 }) {
   return (
-    <div className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4">
-      <p className="text-sm font-semibold text-[var(--muted)]">{label}</p>
-      <p className="mt-2 text-3xl font-semibold">{value}</p>
+    <div className="border-t-2 border-[var(--foreground)] bg-[var(--panel)] p-4">
+      <p className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--muted)]">
+        {label}
+      </p>
+      <p className="font-mono mt-2 text-4xl font-bold tabular-nums">{value}</p>
       <p className="mt-1 text-sm text-[var(--muted)]">{detail}</p>
     </div>
   );
@@ -223,25 +226,31 @@ function TopStory({ story }: { story: ReportItem }) {
     <div className="py-3">
       <div className="flex flex-wrap items-center gap-2">
         {story.priority === "important" && (
-          <span className="rounded-full bg-[#f8e8e8] px-2 py-0.5 text-xs font-semibold text-[var(--critical)]">
-            Important
+          <span className="font-mono -rotate-2 rounded-sm border-2 border-[var(--accent)] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--accent)]">
+            ★ Important
           </span>
         )}
-        <span className="rounded-full bg-[#e6f3f1] px-2 py-0.5 text-xs font-semibold text-[var(--accent-strong)]">
+        <span
+          className={`font-mono rounded-sm px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${
+            story.label === "confirmed_otb"
+              ? "bg-[var(--confirmed-soft)] text-[var(--confirmed)]"
+              : "border border-[var(--line)] text-[var(--muted)]"
+          }`}
+        >
           {STORY_LABELS[story.label] ?? story.label}
         </span>
         {story.sourceType === "social" && (
-          <span className="rounded-full bg-[#e8edf6] px-2 py-0.5 text-xs font-semibold text-[var(--info)]">
+          <span className="font-mono rounded-sm border border-[var(--line)] px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-[var(--info)]">
             {socialPlatform(story.url)}
           </span>
         )}
-        <span className="text-xs font-semibold text-[var(--muted)]">
+        <span className="font-mono text-[11px] text-[var(--muted)]">
           {story.source}
           {published ? ` · ${published}` : ""}
         </span>
         {story.provider && (
           <span
-            className="rounded-full bg-[var(--panel)] px-2 py-0.5 text-[11px] text-[var(--muted)] ring-1 ring-[var(--line)]"
+            className="font-mono text-[11px] text-[var(--muted)] opacity-70"
             title="Which collector found this (internal, not shown to the client)"
           >
             via {story.provider}

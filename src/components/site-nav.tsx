@@ -45,8 +45,12 @@ export default function SiteNav({ active }: { active?: Section }) {
 
       <nav className="border-b border-[var(--line)]">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-5 py-2.5 md:px-8">
-          <span className="text-sm font-semibold text-[var(--muted)]">
-            66 Media Monitor
+          <span className="font-mono flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-[var(--muted)]">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--confirmed)] opacity-60 motion-reduce:hidden" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--confirmed)]" />
+            </span>
+            66 Media Monitor — Live
           </span>
           <div className="flex flex-wrap gap-2">
             {LINKS.map((link) => {

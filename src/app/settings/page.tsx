@@ -14,9 +14,12 @@ export default async function SettingsPage() {
     <SiteNav active="settings" />
     <main className="min-h-screen px-5 py-6 md:px-8">
       <div className="mx-auto max-w-5xl">
-        <header className="flex flex-col gap-4 border-b border-[var(--line)] pb-5">
+        <header className="flex flex-col gap-4 border-b-4 border-[var(--foreground)] pb-5">
           <div>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal md:text-4xl">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-[var(--accent)]">
+              Configuration
+            </p>
+            <h1 className="mt-2 text-3xl font-black tracking-tight md:text-4xl">
               Keywords
             </h1>
             <p className="mt-2 max-w-3xl text-base text-[var(--muted)]">
@@ -28,7 +31,7 @@ export default async function SettingsPage() {
           </div>
         </header>
 
-        <section className="mt-6 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
+        <section className="mt-6 rounded-sm border border-[var(--line)] bg-[var(--panel)] p-5">
           <KeywordEditor
             initialPositiveKeywords={settings.positiveKeywords}
             initialAvoidPhrases={settings.avoidPhrases}

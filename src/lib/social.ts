@@ -72,6 +72,20 @@ const DEFAULT_FB_PAGES = [
 // are invisible to a cookie-free scraper and cannot be added.
 const FB_GROUPS_ACTOR =
   process.env.APIFY_FB_GROUPS_ACTOR || "apify/facebook-groups-scraper";
+// Comments under corridor posts on the watchlist pages. This is where commuter
+// reaction actually lives; the pages' own posts are mostly the stations'
+// headlines. Started from the drain once a page run's posts are known, only for
+// posts that mention the corridor, so we never pay for comments on weather and
+// sports. On by default whenever the watchlist runs; FB_COMMENTS="false" turns
+// it off.
+const FB_COMMENTS_ACTOR =
+  process.env.APIFY_FB_COMMENTS_ACTOR || "apify/facebook-comments-scraper";
+const FB_COMMENTS_PER_POST = 50;
+const FB_COMMENT_POSTS_MAX = 20;
+// Corridor posts worth opening. Deliberately loose: the shared classifier still
+// judges each comment (with its post's text attached) downstream.
+const CORRIDOR_POST = /\bi-?\s?66\b|interstate 66|\b66 express|outside the beltway|\btolls?\b.*\b66\b|\b66\b.*\btolls?\b/i;
+
 // LinkedIn has no open keyword search, so we run in "company-page mode": scrape
 // the recent posts of specific pages (LINKEDIN_PAGES) with a cookie-free
 // company-posts actor. No login, ToS-friendly — but only the pages' own posts,
@@ -151,6 +165,7 @@ const PENDING_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // dataset is drained later, so changing one is a data migration — not a rename.
 const FB_PAGES_PROVIDER = "Facebook (Apify)";
 const FB_GROUPS_PROVIDER = "Facebook groups (Apify)";
+const FB_COMMENTS_PROVIDER = "Facebook comments (Apify)";
 
 function isEnabled(): boolean {
   return (
@@ -350,6 +365,8 @@ function mapperFor(
       return mapFacebookPagePost;
     case FB_GROUPS_PROVIDER:
       return mapFacebookGroupPost;
+    case FB_COMMENTS_PROVIDER:
+      return mapFacebookComment;
     default:
       return null;
   }
@@ -396,6 +413,14 @@ export async function drainPendingApifyRuns(): Promise<RawItem[]> {
         : [];
       const mapped = map ? raw.map(map).filter((item) => item.url) : [];
       items.push(...mapped);
+
+      // A finished page scrape tells us which posts are about the corridor;
+      // their comments are fetched next and land on a later poll.
+      if (run.provider === FB_PAGES_PROVIDER) {
+        await startFacebookComments(mapped, token).catch((error) =>
+          console.warn("[social] could not start Facebook comments:", error),
+        );
+      }
 
       await markApifyRunCollected(run.runId, state, mapped.length);
       console.log(
@@ -693,6 +718,62 @@ function mapFacebookPagePost(post: Record<string, unknown>): RawItem {
     provider: FB_PAGES_PROVIDER,
     domain: "facebook.com",
     engagement: engagementFrom(post),
+  };
+}
+
+/**
+ * Start the comment scrape for the corridor posts in a drained page run.
+ * Deferred like the page scrape itself; drainPendingApifyRuns() collects it.
+ */
+async function startFacebookComments(posts: RawItem[], token: string): Promise<void> {
+  if (process.env.FB_COMMENTS === "false") return;
+  const urls = [
+    ...new Set(
+      posts
+        .filter((post) => CORRIDOR_POST.test(`${post.title} ${post.snippet}`))
+        .map((post) => post.url),
+    ),
+  ].slice(0, FB_COMMENT_POSTS_MAX);
+  if (urls.length === 0) return;
+
+  await startActor(
+    FB_COMMENTS_ACTOR,
+    {
+      startUrls: urls.map((url) => ({ url })),
+      resultsLimit: FB_COMMENTS_PER_POST,
+      includeNestedComments: false,
+    },
+    token,
+    urls.length * FB_COMMENTS_PER_POST,
+    FB_COMMENTS_PROVIDER,
+  );
+}
+
+// A comment is its own social post. Its post's text rides along in the snippet
+// so the classifier can see what "these tolls are robbery" was replying to.
+function mapFacebookComment(comment: Record<string, unknown>): RawItem {
+  const text = str(pick(comment, ["text", "message", "content", "commentText"]));
+  const author = str(
+    pick(comment, ["profileName", "authorName", "author.name", "name", "from.name"]),
+  );
+  const postUrl = str(pick(comment, ["facebookUrl", "postUrl", "inputUrl", "url"]));
+  const id = str(pick(comment, ["id", "commentId", "feedbackId"]));
+  const url =
+    str(pick(comment, ["commentUrl", "commentLink", "permalink"])) ||
+    (postUrl && id ? `${postUrl}${postUrl.includes("?") ? "&" : "?"}comment_id=${id}` : "");
+  const postText = str(pick(comment, ["postTitle", "postText", "post.text"]));
+  return {
+    title: text ? truncate(text, 120) : author ? `${author} commented on Facebook` : "Facebook comment",
+    source: author || "Facebook",
+    url,
+    sourceType: "social" as const,
+    // Every comment here came from a post CORRIDOR_POST matched, so when the
+    // actor omits the post's text a generic corridor note stands in for it.
+    snippet: `${text} (Comment on: ${postText ? truncate(postText, 200) : "an I-66 express lanes post"})`,
+    publishedAt: toIso(pick(comment, ["date", "time", "createdAt", "timestamp"])),
+    provider: FB_COMMENTS_PROVIDER,
+    domain: "facebook.com",
+    engagement: engagementFrom(comment),
   };
 }
 

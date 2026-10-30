@@ -72,6 +72,20 @@ const DEFAULT_FB_PAGES = [
 // are invisible to a cookie-free scraper and cannot be added.
 const FB_GROUPS_ACTOR =
   process.env.APIFY_FB_GROUPS_ACTOR || "apify/facebook-groups-scraper";
+// Comments under corridor posts on the watchlist pages. This is where commuter
+// reaction actually lives; the pages' own posts are mostly the stations'
+// headlines. Started from the drain once a page run's posts are known, only for
+// posts that mention the corridor, so we never pay for comments on weather and
+// sports. On by default whenever the watchlist runs; FB_COMMENTS="false" turns
+// it off.
+const FB_COMMENTS_ACTOR =
+  process.env.APIFY_FB_COMMENTS_ACTOR || "apify/facebook-comments-scraper";
+const FB_COMMENTS_PER_POST = 50;
+const FB_COMMENT_POSTS_MAX = 20;
+// Corridor posts worth opening. Deliberately loose: the shared classifier still
+// judges each comment (with its post's text attached) downstream.
+const CORRIDOR_POST = /\bi-?\s?66\b|interstate 66|\b66 express|outside the beltway|\btolls?\b.*\b66\b|\b66\b.*\btolls?\b/i;
+
 // LinkedIn has no open keyword search, so we run in "company-page mode": scrape
 // the recent posts of specific pages (LINKEDIN_PAGES) with a cookie-free
 // company-posts actor. No login, ToS-friendly — but only the pages' own posts,
@@ -86,15 +100,23 @@ const LINKEDIN_ACTOR =
 // bills per result returned, so anything the actors fetch and this cap then
 // discards is money spent on data we never look at.
 const X_MAX_ITEMS = 35;
-// 23 pages x FB_POSTS_PER_PAGE, with headroom. The busy DC stations post many
-// times a day; at the old 3-per-page/20-total the corridor posts were usually
-// pushed out by weather and sports before we ever saw them.
-const FB_MAX_ITEMS = 150;
-const FB_POSTS_PER_PAGE = 10;
+// Per-page ceiling. The scrape asks for everything since yesterday
+// (onlyPostsNewerThan), so this only bites on the busiest stations, which post
+// 30+ times a day; at the old 10-per-page a corridor story posted the previous
+// afternoon had usually scrolled out before the 6:30 AM run. The run-wide cap is
+// pages x this, so every page on the watchlist is reached (a fixed 150 cap used
+// to cut the run off before the last pages, Ride66Express's neighbours and the
+// commuter pages among them, were ever scraped).
+const FB_POSTS_PER_PAGE = 40;
 const FB_POSTS_PER_GROUP = 15;
 const FB_GROUPS_MAX_ITEMS = 60;
 const LINKEDIN_MAX_PER_PAGE = 5;
 const TOTAL_CAP = 200;
+
+// A drained Facebook dataset is mostly off-topic station posts that the shared
+// classifier discards later, so it is read in full rather than sliced to
+// TOTAL_CAP first; slicing by recency used to drop corridor posts unseen.
+const DRAIN_CAP = 2000;
 
 // Broad, recall-oriented X searches run alongside the exact brand phrases. These
 // catch how people actually tweet about the corridor ("the I-66 toll was $40");
@@ -143,6 +165,7 @@ const PENDING_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // dataset is drained later, so changing one is a data migration — not a rename.
 const FB_PAGES_PROVIDER = "Facebook (Apify)";
 const FB_GROUPS_PROVIDER = "Facebook groups (Apify)";
+const FB_COMMENTS_PROVIDER = "Facebook comments (Apify)";
 
 function isEnabled(): boolean {
   return (
@@ -305,7 +328,7 @@ export async function backfillFacebookRuns(
     }
 
     try {
-      const raw = await fetchDatasetItems(run.datasetId, token, TOTAL_CAP);
+      const raw = await fetchDatasetItems(run.datasetId, token, DRAIN_CAP);
       rawPosts += raw.length;
       const mapped = raw.map(mapFacebookPagePost).filter((item) => item.url);
       items.push(...mapped);
@@ -342,6 +365,8 @@ function mapperFor(
       return mapFacebookPagePost;
     case FB_GROUPS_PROVIDER:
       return mapFacebookGroupPost;
+    case FB_COMMENTS_PROVIDER:
+      return mapFacebookComment;
     default:
       return null;
   }
@@ -384,10 +409,18 @@ export async function drainPendingApifyRuns(): Promise<RawItem[]> {
 
       const map = mapperFor(run.provider);
       const raw = map
-        ? await fetchDatasetItems(run.datasetId, token, TOTAL_CAP)
+        ? await fetchDatasetItems(run.datasetId, token, DRAIN_CAP)
         : [];
       const mapped = map ? raw.map(map).filter((item) => item.url) : [];
       items.push(...mapped);
+
+      // A finished page scrape tells us which posts are about the corridor;
+      // their comments are fetched next and land on a later poll.
+      if (run.provider === FB_PAGES_PROVIDER) {
+        await startFacebookComments(mapped, token).catch((error) =>
+          console.warn("[social] could not start Facebook comments:", error),
+        );
+      }
 
       await markApifyRunCollected(run.runId, state, mapped.length);
       console.log(
@@ -402,7 +435,7 @@ export async function drainPendingApifyRuns(): Promise<RawItem[]> {
   }
 
   items.sort((a, b) => dateValue(b.publishedAt) - dateValue(a.publishedAt));
-  return dedupeByUrl(items).slice(0, TOTAL_CAP);
+  return dedupeByUrl(items);
 }
 
 /**
@@ -626,12 +659,28 @@ async function startFacebookPages(token: string): Promise<void> {
   //
   // Deferred: 23 pages x 10 posts takes minutes, not seconds. drainPending-
   // ApifyRuns() picks the results up on a later poll.
+  const pages = facebookPages();
   const input = {
-    startUrls: facebookPages().map((url) => ({ url })),
+    startUrls: pages.map((url) => ({ url })),
     resultsLimit: FB_POSTS_PER_PAGE,
+    // Everything since the start of yesterday (Eastern), so a daily run
+    // overlaps the previous one instead of sampling the newest few posts.
+    onlyPostsNewerThan: easternDateDaysAgo(1),
   };
 
-  await startActor(FB_ACTOR, input, token, FB_MAX_ITEMS, FB_PAGES_PROVIDER);
+  await startActor(
+    FB_ACTOR,
+    input,
+    token,
+    pages.length * FB_POSTS_PER_PAGE,
+    FB_PAGES_PROVIDER,
+  );
+}
+
+/** "YYYY-MM-DD" in Eastern time, `days` before today. */
+function easternDateDaysAgo(days: number): string {
+  const date = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  return date.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 }
 
 // Output shape varies across actor versions — read fields defensively.
@@ -669,6 +718,62 @@ function mapFacebookPagePost(post: Record<string, unknown>): RawItem {
     provider: FB_PAGES_PROVIDER,
     domain: "facebook.com",
     engagement: engagementFrom(post),
+  };
+}
+
+/**
+ * Start the comment scrape for the corridor posts in a drained page run.
+ * Deferred like the page scrape itself; drainPendingApifyRuns() collects it.
+ */
+async function startFacebookComments(posts: RawItem[], token: string): Promise<void> {
+  if (process.env.FB_COMMENTS === "false") return;
+  const urls = [
+    ...new Set(
+      posts
+        .filter((post) => CORRIDOR_POST.test(`${post.title} ${post.snippet}`))
+        .map((post) => post.url),
+    ),
+  ].slice(0, FB_COMMENT_POSTS_MAX);
+  if (urls.length === 0) return;
+
+  await startActor(
+    FB_COMMENTS_ACTOR,
+    {
+      startUrls: urls.map((url) => ({ url })),
+      resultsLimit: FB_COMMENTS_PER_POST,
+      includeNestedComments: false,
+    },
+    token,
+    urls.length * FB_COMMENTS_PER_POST,
+    FB_COMMENTS_PROVIDER,
+  );
+}
+
+// A comment is its own social post. Its post's text rides along in the snippet
+// so the classifier can see what "these tolls are robbery" was replying to.
+function mapFacebookComment(comment: Record<string, unknown>): RawItem {
+  const text = str(pick(comment, ["text", "message", "content", "commentText"]));
+  const author = str(
+    pick(comment, ["profileName", "authorName", "author.name", "name", "from.name"]),
+  );
+  const postUrl = str(pick(comment, ["facebookUrl", "postUrl", "inputUrl", "url"]));
+  const id = str(pick(comment, ["id", "commentId", "feedbackId"]));
+  const url =
+    str(pick(comment, ["commentUrl", "commentLink", "permalink"])) ||
+    (postUrl && id ? `${postUrl}${postUrl.includes("?") ? "&" : "?"}comment_id=${id}` : "");
+  const postText = str(pick(comment, ["postTitle", "postText", "post.text"]));
+  return {
+    title: text ? truncate(text, 120) : author ? `${author} commented on Facebook` : "Facebook comment",
+    source: author || "Facebook",
+    url,
+    sourceType: "social" as const,
+    // Every comment here came from a post CORRIDOR_POST matched, so when the
+    // actor omits the post's text a generic corridor note stands in for it.
+    snippet: `${text} (Comment on: ${postText ? truncate(postText, 200) : "an I-66 express lanes post"})`,
+    publishedAt: toIso(pick(comment, ["date", "time", "createdAt", "timestamp"])),
+    provider: FB_COMMENTS_PROVIDER,
+    domain: "facebook.com",
+    engagement: engagementFrom(comment),
   };
 }
 

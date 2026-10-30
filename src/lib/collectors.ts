@@ -377,13 +377,21 @@ function classifyItem(
   const priority =
     label !== "related" && isCritical(combined) ? "important" : "normal";
   const reason = buildReason(label, sourceMatch);
+  // A Facebook/X/Threads post that a search engine surfaced is still a social
+  // post, not an online-news article. Google News links are redirects, so the
+  // publisher name ("facebook.com") is checked as well as the URL.
+  const sourceType =
+    item.sourceType === "news" &&
+    (isSocialHost(item.url) || isSocialHost(`https://${item.source.trim()}`))
+      ? "social"
+      : item.sourceType;
 
   return {
     id: createStableId(item.url, item.title),
     title: cleanText(item.title),
     source: sourceMatch?.sourceName || cleanText(item.source),
     url: item.url,
-    sourceType: item.sourceType,
+    sourceType,
     label,
     priority,
     reason,
@@ -397,6 +405,30 @@ function classifyItem(
     engagement: item.engagement,
     provider: item.provider,
   };
+}
+
+const SOCIAL_HOSTS = [
+  "facebook.com",
+  "fb.com",
+  "x.com",
+  "twitter.com",
+  "threads.net",
+  "threads.com",
+  "instagram.com",
+  "bsky.app",
+  "linkedin.com",
+  "tiktok.com",
+  "nextdoor.com",
+  "reddit.com",
+];
+
+function isSocialHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    return SOCIAL_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
 }
 
 function determineLabel(text: string): RelevanceLabel {

@@ -86,15 +86,23 @@ const LINKEDIN_ACTOR =
 // bills per result returned, so anything the actors fetch and this cap then
 // discards is money spent on data we never look at.
 const X_MAX_ITEMS = 35;
-// 23 pages x FB_POSTS_PER_PAGE, with headroom. The busy DC stations post many
-// times a day; at the old 3-per-page/20-total the corridor posts were usually
-// pushed out by weather and sports before we ever saw them.
-const FB_MAX_ITEMS = 150;
-const FB_POSTS_PER_PAGE = 10;
+// Per-page ceiling. The scrape asks for everything since yesterday
+// (onlyPostsNewerThan), so this only bites on the busiest stations, which post
+// 30+ times a day; at the old 10-per-page a corridor story posted the previous
+// afternoon had usually scrolled out before the 6:30 AM run. The run-wide cap is
+// pages x this, so every page on the watchlist is reached (a fixed 150 cap used
+// to cut the run off before the last pages, Ride66Express's neighbours and the
+// commuter pages among them, were ever scraped).
+const FB_POSTS_PER_PAGE = 40;
 const FB_POSTS_PER_GROUP = 15;
 const FB_GROUPS_MAX_ITEMS = 60;
 const LINKEDIN_MAX_PER_PAGE = 5;
 const TOTAL_CAP = 200;
+
+// A drained Facebook dataset is mostly off-topic station posts that the shared
+// classifier discards later, so it is read in full rather than sliced to
+// TOTAL_CAP first; slicing by recency used to drop corridor posts unseen.
+const DRAIN_CAP = 2000;
 
 // Broad, recall-oriented X searches run alongside the exact brand phrases. These
 // catch how people actually tweet about the corridor ("the I-66 toll was $40");
@@ -305,7 +313,7 @@ export async function backfillFacebookRuns(
     }
 
     try {
-      const raw = await fetchDatasetItems(run.datasetId, token, TOTAL_CAP);
+      const raw = await fetchDatasetItems(run.datasetId, token, DRAIN_CAP);
       rawPosts += raw.length;
       const mapped = raw.map(mapFacebookPagePost).filter((item) => item.url);
       items.push(...mapped);
@@ -384,7 +392,7 @@ export async function drainPendingApifyRuns(): Promise<RawItem[]> {
 
       const map = mapperFor(run.provider);
       const raw = map
-        ? await fetchDatasetItems(run.datasetId, token, TOTAL_CAP)
+        ? await fetchDatasetItems(run.datasetId, token, DRAIN_CAP)
         : [];
       const mapped = map ? raw.map(map).filter((item) => item.url) : [];
       items.push(...mapped);
@@ -402,7 +410,7 @@ export async function drainPendingApifyRuns(): Promise<RawItem[]> {
   }
 
   items.sort((a, b) => dateValue(b.publishedAt) - dateValue(a.publishedAt));
-  return dedupeByUrl(items).slice(0, TOTAL_CAP);
+  return dedupeByUrl(items);
 }
 
 /**
@@ -626,12 +634,28 @@ async function startFacebookPages(token: string): Promise<void> {
   //
   // Deferred: 23 pages x 10 posts takes minutes, not seconds. drainPending-
   // ApifyRuns() picks the results up on a later poll.
+  const pages = facebookPages();
   const input = {
-    startUrls: facebookPages().map((url) => ({ url })),
+    startUrls: pages.map((url) => ({ url })),
     resultsLimit: FB_POSTS_PER_PAGE,
+    // Everything since the start of yesterday (Eastern), so a daily run
+    // overlaps the previous one instead of sampling the newest few posts.
+    onlyPostsNewerThan: easternDateDaysAgo(1),
   };
 
-  await startActor(FB_ACTOR, input, token, FB_MAX_ITEMS, FB_PAGES_PROVIDER);
+  await startActor(
+    FB_ACTOR,
+    input,
+    token,
+    pages.length * FB_POSTS_PER_PAGE,
+    FB_PAGES_PROVIDER,
+  );
+}
+
+/** "YYYY-MM-DD" in Eastern time, `days` before today. */
+function easternDateDaysAgo(days: number): string {
+  const date = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  return date.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 }
 
 // Output shape varies across actor versions — read fields defensively.

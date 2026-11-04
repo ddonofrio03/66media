@@ -12,9 +12,9 @@ import { getDigestLookbackHours } from "@/lib/time";
  * Silent no-op when unset. Best-effort: any failure returns [] and is logged.
  *
  * Quota: each search.list call costs 100 units against a default 10,000/day
- * project quota. Per collection: 3 keyword searches + 4 station searches =
- * 700 units. The poller runs every 2 hours (12 collections/day), so about
- * 8,400 units/day. Lower MAX_QUERIES if the quota is shared with other
+ * project quota. Per collection: 3 keyword searches + 5 station searches =
+ * 800 units. The poller runs every 2 hours (12 collections/day), so about
+ * 9,600 units/day, close to the default cap. Lower MAX_QUERIES if the quota is shared with other
  * projects. The station pass is the one to keep.
  *
  * The search snippet already carries title, description and channel name, so
@@ -29,14 +29,15 @@ const RESULTS_PER_QUERY = 10;
 const RESULTS_PER_STATION = 50;
 const TIMEOUT_MS = 8000;
 
-// The four major DC TV stations, searched per channel so every upload in the
-// lookback window is seen, not just the feed's ~15 newest. Channel IDs match
-// the feeds in feeds.ts (WRC = NBC4 Washington, WTTG = FOX 5 DC).
+// The DC TV stations, searched per channel so every upload in the lookback
+// window is seen, not just the feed's ~15 newest. Channel IDs match the feeds
+// in feeds.ts (WRC = NBC4 Washington, WTTG = FOX 5 DC, WDVM = DC News Now).
 export const STATION_CHANNELS: Array<{ name: string; channelId: string }> = [
   { name: "WJLA 7News", channelId: "UCfIjR00qhYUFkbWIugAAbGg" },
   { name: "WRC NBC4", channelId: "UC1VKVKhJLc7PjdPPVxTDk0Q" },
   { name: "WTTG FOX 5", channelId: "UCHLyP4MuA-JAFBCwxXOEDdA" },
   { name: "WUSA9", channelId: "UCcT6w3xUyVshyR2_2vrMp1w" },
+  { name: "WDVM DC News Now", channelId: "UCP3sSdrcCw7qC0qSrD8xOHQ" },
 ];
 
 type YouTubeSearchItem = {

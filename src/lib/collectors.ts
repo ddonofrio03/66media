@@ -10,6 +10,7 @@ import { collectMetroMonitorItems } from "@/lib/metro-monitor";
 import { collectGoogleAlertsItems } from "@/lib/google-alerts";
 import { collectXOfficialItems, isXOfficialEnabled } from "@/lib/x-official";
 import { enrichYouTubeTranscripts } from "@/lib/youtube-captions";
+import { collectYouTubeSearchItems } from "@/lib/youtube-search";
 import { refineClassifications } from "@/lib/ai-classify";
 import { getDigestLookbackHours } from "@/lib/time";
 import type {
@@ -97,6 +98,13 @@ export async function collectDigestItems(
     // a search-engine copy and keeps its broadcast classification.
     { name: "Media Feeds", run: () => collectFeedItems(MEDIA_FEEDS) },
     { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
+    // YouTube keyword search across ALL channels (not just the station feeds).
+    // Silent [] unless YOUTUBE_API_KEY is set. Uses the positive keywords, so
+    // editing them in Settings changes what YouTube is searched for.
+    {
+      name: "YouTube Search",
+      run: () => collectYouTubeSearchItems(settings.positiveKeywords, now),
+    },
     // The user's own Google Alerts, delivered as RSS. Runs after Google News so
     // a story both caught keeps the Google News copy (see dedupeRawItems).
     // Silent [] when GOOGLE_ALERTS_FEEDS is unset.

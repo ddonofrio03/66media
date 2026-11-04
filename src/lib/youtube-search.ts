@@ -1,0 +1,163 @@
+import type { RawItem } from "@/lib/collectors";
+import { getDigestLookbackHours } from "@/lib/time";
+
+/**
+ * YouTube keyword search via the YouTube Data API v3 (search.list).
+ *
+ * Finds uploads from ANY channel that match the monitoring keywords, not just
+ * the station channels listed in feeds.ts. Gated on:
+ *
+ *   YOUTUBE_API_KEY   a key from Google Cloud with "YouTube Data API v3" enabled
+ *
+ * Silent no-op when unset. Best-effort: any failure returns [] and is logged.
+ *
+ * Quota: each search.list call costs 100 units against a default 10,000/day
+ * project quota. MAX_QUERIES phrases per collection keeps the cost bounded.
+ * The poller runs every 2 hours, so 5 phrases is about 6,000 units/day.
+ * Lower MAX_QUERIES if the quota is shared with other projects.
+ *
+ * The search snippet already carries title, description and channel name, so
+ * no follow-up videos.list call is needed.
+ */
+
+const API_BASE = "https://www.googleapis.com/youtube/v3/search";
+const MAX_QUERIES = 5;
+const RESULTS_PER_QUERY = 10;
+const TIMEOUT_MS = 8000;
+
+type YouTubeSearchItem = {
+  id?: { videoId?: string };
+  snippet?: {
+    title?: string;
+    description?: string;
+    channelTitle?: string;
+    publishedAt?: string;
+  };
+};
+
+type YouTubeSearchResponse = {
+  items?: YouTubeSearchItem[];
+  error?: { code?: number; message?: string };
+};
+
+export async function collectYouTubeSearchItems(
+  keywords: string[],
+  now = new Date(),
+): Promise<RawItem[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) {
+    return [];
+  }
+
+  const queries = toQueries(keywords).slice(0, MAX_QUERIES);
+  if (queries.length === 0) {
+    return [];
+  }
+
+  const publishedAfter = new Date(
+    now.getTime() - getDigestLookbackHours(now) * 60 * 60 * 1000,
+  ).toISOString();
+
+  const results = await Promise.allSettled(
+    queries.map((query) => searchQuery(query, apiKey, publishedAfter)),
+  );
+
+  const seen = new Set<string>();
+  const items: RawItem[] = [];
+  for (const result of results) {
+    if (result.status !== "fulfilled") {
+      continue;
+    }
+    for (const item of result.value) {
+      if (seen.has(item.url)) {
+        continue;
+      }
+      seen.add(item.url);
+      items.push(item);
+    }
+  }
+  return items;
+}
+
+// Quote each keyword as an exact phrase and drop case-insensitive duplicates
+// (the default list has "66 EMP" and "66EMP" as separate entries).
+function toQueries(keywords: string[]): string[] {
+  const seen = new Set<string>();
+  const queries: string[] = [];
+  for (const keyword of keywords) {
+    const cleaned = keyword.replace(/"/g, "").trim();
+    const key = cleaned.toLowerCase();
+    if (!cleaned || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    queries.push(`"${cleaned}"`);
+  }
+  return queries;
+}
+
+async function searchQuery(
+  query: string,
+  apiKey: string,
+  publishedAfter: string,
+): Promise<RawItem[]> {
+  const url = new URL(API_BASE);
+  url.searchParams.set("part", "snippet");
+  url.searchParams.set("type", "video");
+  url.searchParams.set("order", "date");
+  url.searchParams.set("q", query);
+  url.searchParams.set("publishedAfter", publishedAfter);
+  url.searchParams.set("maxResults", String(RESULTS_PER_QUERY));
+  url.searchParams.set("key", apiKey);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const response = await fetch(url.toString(), {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const data = (await response.json()) as YouTubeSearchResponse;
+    if (!response.ok) {
+      console.warn(
+        `[youtube-search] ${query} skipped (HTTP ${response.status}): ${data.error?.message ?? "unknown error"}`,
+      );
+      return [];
+    }
+    return (data.items ?? []).map(toRawItem).filter((item) => item.url);
+  } catch (error) {
+    console.warn(`[youtube-search] ${query} failed:`, error);
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function toRawItem(item: YouTubeSearchItem): RawItem {
+  const videoId = item.id?.videoId ?? "";
+  const title = decodeEntities(item.snippet?.title ?? "").trim();
+  const description = decodeEntities(item.snippet?.description ?? "").trim();
+  return {
+    title: title || "Untitled video",
+    source: item.snippet?.channelTitle || "YouTube",
+    url: videoId ? `https://www.youtube.com/watch?v=${videoId}` : "",
+    // Search results are mostly newscast uploads, so they share the broadcast
+    // bucket with the station feeds. A judgment call; change here if wrong.
+    sourceType: "broadcast",
+    snippet: description || title,
+    publishedAt: item.snippet?.publishedAt ?? new Date().toISOString(),
+    provider: "YouTube Search",
+    domain: "youtube.com",
+  };
+}
+
+// The Data API returns HTML entities (e.g. &#39;) in titles and descriptions.
+function decodeEntities(value: string) {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">");
+}

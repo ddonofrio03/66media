@@ -13,8 +13,8 @@ import { getDigestLookbackHours } from "@/lib/time";
  *
  * Quota: each search.list call costs 100 units against a default 10,000/day
  * project quota. Per collection: 3 keyword searches + 5 station searches =
- * 800 units. The poller runs every 2 hours (12 collections/day), so about
- * 9,600 units/day, close to the default cap. Lower MAX_QUERIES if the quota is shared with other
+ * 800 units. YouTube runs on the poller's 8-hour slots (3/day) plus the daily
+ * digest, so about 3,200 units/day. Lower MAX_QUERIES if the quota is shared with other
  * projects. The station pass is the one to keep.
  *
  * The search snippet already carries title, description and channel name, so

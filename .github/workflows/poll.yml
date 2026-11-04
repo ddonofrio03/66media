@@ -1,7 +1,9 @@
 # Near-real-time media polling.
 #
 # Vercel Hobby crons are daily-only, so this GitHub Actions schedule drives the
-# 10-minute poll instead (same pattern as the harvest/penzance dashboards).
+# poll instead (same pattern as the harvest/penzance dashboards). It runs every
+# 2 hours; YouTube searches run only on the 8-hour slots (UTC 0, 8, 16) inside
+# the poll route.
 # GitHub cron granularity is best-effort — expect ~10-20 minute effective
 # cadence.
 #

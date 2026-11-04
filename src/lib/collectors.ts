@@ -84,6 +84,10 @@ export type CollectionOptions = {
   // the genuinely-new items itself, so repeat borderline items aren't
   // re-classified every 10 minutes.
   refine?: boolean;
+  // Run the YouTube keyword and station searches. Default true. The poller
+  // sets this only on its 8-hour slots (see poll route); the lookback window
+  // is 36 hours, so nothing is missed between runs.
+  includeYouTube?: boolean;
 };
 
 export async function collectDigestItems(
@@ -92,7 +96,7 @@ export async function collectDigestItems(
   settings: MonitoringSettings = DEFAULT_SETTINGS,
   options: CollectionOptions = {},
 ): Promise<CollectionResult> {
-  const { includeSocial = true, refine = true } = options;
+  const { includeSocial = true, refine = true, includeYouTube = true } = options;
   const exactQueries = settings.positiveKeywords.map(quotePhrase);
   const newsQueries = [...exactQueries, BROAD_NEWS_QUERY];
 
@@ -101,16 +105,23 @@ export async function collectDigestItems(
     // a search-engine copy and keeps its broadcast classification.
     { name: "Media Feeds", run: () => collectFeedItems(MEDIA_FEEDS) },
     { name: "Google News", run: () => collectGoogleNewsItems(newsQueries) },
-    // YouTube keyword search across ALL channels (not just the station feeds).
-    // Silent [] unless YOUTUBE_API_KEY is set. Uses the positive keywords, so
+    // YouTube searches cost quota, so they run only when includeYouTube is set.
+    // Silent [] unless YOUTUBE_API_KEY is set.
+    // Keyword search across ALL channels. Uses the positive keywords, so
     // editing them in Settings changes what YouTube is searched for.
-    {
-      name: "YouTube Search",
-      run: () => collectYouTubeSearchItems(settings.positiveKeywords, now),
-    },
-    // Full lookback-window pass over the four DC station channels. Silent []
-    // unless YOUTUBE_API_KEY is set.
-    { name: "YouTube Stations", run: () => collectStationChannelItems(now) },
+    ...(includeYouTube
+      ? [
+          {
+            name: "YouTube Search",
+            run: () => collectYouTubeSearchItems(settings.positiveKeywords, now),
+          },
+          // Full lookback-window pass over the DC station channels.
+          {
+            name: "YouTube Stations",
+            run: () => collectStationChannelItems(now),
+          },
+        ]
+      : []),
     // The user's own Google Alerts, delivered as RSS. Runs after Google News so
     // a story both caught keeps the Google News copy (see dedupeRawItems).
     // Silent [] when GOOGLE_ALERTS_FEEDS is unset.

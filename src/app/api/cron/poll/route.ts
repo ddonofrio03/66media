@@ -24,6 +24,10 @@ import { getSources } from "@/lib/sources";
  *
  * Social (Apify) deliberately never runs here: those actors bill per result
  * and stay daily-only in the digest run.
+ *
+ * YouTube searches run only every 8 hours (UTC hours 0, 8, 16), which keeps
+ * YouTube quota use to about 2,400 units/day. The 36-hour lookback still
+ * covers the gaps, and dedupe stops repeat alerts.
  */
 
 export const dynamic = "force-dynamic";
@@ -59,8 +63,14 @@ export async function GET(request: Request) {
   // ?social=1: manual verification runs only — also fire the pay-per-result
   // Apify actors (FB watchlist etc.) that normally run daily-digest-only.
   const includeSocial = request.url.includes("social=1");
+  // YouTube searches run every 8 hours, not on every 2-hourly poll. The
+  // schedule fires at even UTC hours, so hour 0, 8 and 16 are the YouTube
+  // slots. ?youtube=1 forces a run for manual checks.
+  const includeYouTube =
+    now.getUTCHours() % 8 === 0 || request.url.includes("youtube=1");
   const collection = await collectDigestItems(sources, now, settings, {
     includeSocial,
+    includeYouTube,
     refine: false,
   });
 

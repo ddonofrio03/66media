@@ -10,7 +10,10 @@ import { collectMetroMonitorItems } from "@/lib/metro-monitor";
 import { collectGoogleAlertsItems } from "@/lib/google-alerts";
 import { collectXOfficialItems, isXOfficialEnabled } from "@/lib/x-official";
 import { enrichYouTubeTranscripts } from "@/lib/youtube-captions";
-import { collectYouTubeSearchItems } from "@/lib/youtube-search";
+import {
+  collectStationChannelItems,
+  collectYouTubeSearchItems,
+} from "@/lib/youtube-search";
 import { refineClassifications } from "@/lib/ai-classify";
 import { getDigestLookbackHours } from "@/lib/time";
 import type {
@@ -105,6 +108,9 @@ export async function collectDigestItems(
       name: "YouTube Search",
       run: () => collectYouTubeSearchItems(settings.positiveKeywords, now),
     },
+    // Full lookback-window pass over the four DC station channels. Silent []
+    // unless YOUTUBE_API_KEY is set.
+    { name: "YouTube Stations", run: () => collectStationChannelItems(now) },
     // The user's own Google Alerts, delivered as RSS. Runs after Google News so
     // a story both caught keeps the Google News copy (see dedupeRawItems).
     // Silent [] when GOOGLE_ALERTS_FEEDS is unset.

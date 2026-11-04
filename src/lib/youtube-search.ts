@@ -12,18 +12,32 @@ import { getDigestLookbackHours } from "@/lib/time";
  * Silent no-op when unset. Best-effort: any failure returns [] and is logged.
  *
  * Quota: each search.list call costs 100 units against a default 10,000/day
- * project quota. MAX_QUERIES phrases per collection keeps the cost bounded.
- * The poller runs every 2 hours, so 5 phrases is about 6,000 units/day.
- * Lower MAX_QUERIES if the quota is shared with other projects.
+ * project quota. Per collection: 3 keyword searches + 4 station searches =
+ * 700 units. The poller runs every 2 hours (12 collections/day), so about
+ * 8,400 units/day. Lower MAX_QUERIES if the quota is shared with other
+ * projects. The station pass is the one to keep.
  *
  * The search snippet already carries title, description and channel name, so
  * no follow-up videos.list call is needed.
  */
 
 const API_BASE = "https://www.googleapis.com/youtube/v3/search";
-const MAX_QUERIES = 5;
+// Keyword phrases searched across ALL of YouTube. Kept at 3 so the total stays
+// under the 10,000/day quota with the station pass below.
+const MAX_QUERIES = 3;
 const RESULTS_PER_QUERY = 10;
+const RESULTS_PER_STATION = 50;
 const TIMEOUT_MS = 8000;
+
+// The four major DC TV stations, searched per channel so every upload in the
+// lookback window is seen, not just the feed's ~15 newest. Channel IDs match
+// the feeds in feeds.ts (WRC = NBC4 Washington, WTTG = FOX 5 DC).
+export const STATION_CHANNELS: Array<{ name: string; channelId: string }> = [
+  { name: "WJLA 7News", channelId: "UCfIjR00qhYUFkbWIugAAbGg" },
+  { name: "WRC NBC4", channelId: "UC1VKVKhJLc7PjdPPVxTDk0Q" },
+  { name: "WTTG FOX 5", channelId: "UCHLyP4MuA-JAFBCwxXOEDdA" },
+  { name: "WUSA9", channelId: "UCcT6w3xUyVshyR2_2vrMp1w" },
+];
 
 type YouTubeSearchItem = {
   id?: { videoId?: string };
@@ -54,12 +68,16 @@ export async function collectYouTubeSearchItems(
     return [];
   }
 
-  const publishedAfter = new Date(
-    now.getTime() - getDigestLookbackHours(now) * 60 * 60 * 1000,
-  ).toISOString();
+  const publishedAfter = lookbackStart(now);
 
   const results = await Promise.allSettled(
-    queries.map((query) => searchQuery(query, apiKey, publishedAfter)),
+    queries.map((query) =>
+      searchQuery(query, apiKey, {
+        q: query,
+        maxResults: String(RESULTS_PER_QUERY),
+        publishedAfter,
+      }),
+    ),
   );
 
   const seen = new Set<string>();
@@ -96,18 +114,58 @@ function toQueries(keywords: string[]): string[] {
   return queries;
 }
 
+/**
+ * Every upload from the four DC station channels inside the lookback window.
+ * One search.list call per channel (100 units each, 400 per collection). The
+ * classifier then keeps only the items that match 66 OTB keywords. Silent []
+ * unless YOUTUBE_API_KEY is set.
+ */
+export async function collectStationChannelItems(
+  now = new Date(),
+): Promise<RawItem[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) {
+    return [];
+  }
+
+  const publishedAfter = lookbackStart(now);
+  const results = await Promise.allSettled(
+    STATION_CHANNELS.map((station) =>
+      searchQuery(
+        `channel:${station.name}`,
+        apiKey,
+        {
+          channelId: station.channelId,
+          maxResults: String(RESULTS_PER_STATION),
+          publishedAfter,
+        },
+      ),
+    ),
+  );
+  return results.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : [],
+  );
+}
+
+function lookbackStart(now: Date) {
+  return new Date(
+    now.getTime() - getDigestLookbackHours(now) * 60 * 60 * 1000,
+  ).toISOString();
+}
+
 async function searchQuery(
-  query: string,
+  label: string,
   apiKey: string,
-  publishedAfter: string,
+  params: Record<string, string>,
 ): Promise<RawItem[]> {
   const url = new URL(API_BASE);
   url.searchParams.set("part", "snippet");
   url.searchParams.set("type", "video");
   url.searchParams.set("order", "date");
-  url.searchParams.set("q", query);
-  url.searchParams.set("publishedAfter", publishedAfter);
   url.searchParams.set("maxResults", String(RESULTS_PER_QUERY));
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
   url.searchParams.set("key", apiKey);
 
   const controller = new AbortController();
@@ -120,13 +178,13 @@ async function searchQuery(
     const data = (await response.json()) as YouTubeSearchResponse;
     if (!response.ok) {
       console.warn(
-        `[youtube-search] ${query} skipped (HTTP ${response.status}): ${data.error?.message ?? "unknown error"}`,
+        `[youtube-search] ${label} skipped (HTTP ${response.status}): ${data.error?.message ?? "unknown error"}`,
       );
       return [];
     }
     return (data.items ?? []).map(toRawItem).filter((item) => item.url);
   } catch (error) {
-    console.warn(`[youtube-search] ${query} failed:`, error);
+    console.warn(`[youtube-search] ${label} failed:`, error);
     return [];
   } finally {
     clearTimeout(timer);
